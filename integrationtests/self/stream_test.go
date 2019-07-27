@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net"
 	"sync"
+	"time"
 
 	quic "github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/integrationtests/tools/testserver"
@@ -41,6 +42,68 @@ var _ = Describe("Bidirectional streams", func() {
 
 			AfterEach(func() {
 				server.Close()
+			})
+
+			FIt("test", func() {
+				done := make(chan struct{}, 4)
+				go func() {
+					defer GinkgoRecover()
+					sess, err := server.Accept(context.Background())
+					Expect(err).ToNot(HaveOccurred())
+					str, err := sess.AcceptStream(context.Background())
+					Expect(err).ToNot(HaveOccurred())
+
+					go func() {
+						defer GinkgoRecover()
+						fmt.Println("server writing data")
+						defer fmt.Println("server done writing data")
+						_, err := str.Write(testserver.PRDataLong)
+						Expect(err).ToNot(HaveOccurred())
+						Expect(str.Close()).To(Succeed())
+						done <- struct{}{}
+					}()
+
+					go func() {
+						defer GinkgoRecover()
+						fmt.Println("server reading data")
+						defer fmt.Println("server done reading data")
+						data, err := ioutil.ReadAll(str)
+						Expect(err).ToNot(HaveOccurred())
+						Expect(data).To(Equal(testserver.PRDataLong))
+						done <- struct{}{}
+					}()
+				}()
+
+				sess, err := quic.DialAddr(
+					serverAddr,
+					getTLSClientConfig(),
+					qconf,
+				)
+				Expect(err).ToNot(HaveOccurred())
+				str, err := sess.OpenStream()
+				Expect(err).ToNot(HaveOccurred())
+
+				go func() {
+					defer GinkgoRecover()
+					fmt.Println("client writing data")
+					defer fmt.Println("client done writing data")
+					_, err := str.Write(testserver.PRDataLong)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(str.Close()).To(Succeed())
+					done <- struct{}{}
+				}()
+
+				go func() {
+					defer GinkgoRecover()
+					fmt.Println("client reading data")
+					defer fmt.Println("client done reading data")
+					data, err := ioutil.ReadAll(str)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(data).To(Equal(testserver.PRDataLong))
+					done <- struct{}{}
+				}()
+
+				Eventually(done, 20*time.Second).Should(HaveLen(4))
 			})
 
 			runSendingPeer := func(sess quic.Session) {

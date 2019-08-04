@@ -598,8 +598,8 @@ func (s *session) handleSinglePacket(p *receivedPacket, hdr *wire.Header) bool /
 		s.logger.Debugf("Dropping packet with unexpected source connection ID: %s (expected %s)", hdr.SrcConnectionID, s.destConnID)
 		return false
 	}
-	// drop 0-RTT packets
-	if hdr.Type == protocol.PacketType0RTT {
+	// drop 0-RTT packets, if we are a client
+	if s.perspective == protocol.PerspectiveClient && hdr.Type == protocol.PacketType0RTT {
 		return false
 	}
 

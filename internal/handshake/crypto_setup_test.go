@@ -655,6 +655,45 @@ var _ = Describe("Crypto Setup TLS", func() {
 				Expect(server.ConnectionState().DidResume).To(BeFalse())
 				Expect(client.ConnectionState().DidResume).To(BeFalse())
 			})
+
+			It("uses 0-RTT", func() {
+				csc := NewMockClientSessionCache(mockCtrl)
+				var state *tls.ClientSessionState
+				receivedSessionTicket := make(chan struct{})
+				csc.EXPECT().Get(gomock.Any())
+				csc.EXPECT().Put(gomock.Any(), gomock.Any()).Do(func(_ string, css *tls.ClientSessionState) {
+					state = css
+					close(receivedSessionTicket)
+				})
+				clientConf.ClientSessionCache = csc
+				client, clientErr, server, serverErr := handshakeWithTLSConf(clientConf, serverConf)
+				Expect(clientErr).ToNot(HaveOccurred())
+				Expect(serverErr).ToNot(HaveOccurred())
+				Eventually(receivedSessionTicket).Should(BeClosed())
+				Expect(server.ConnectionState().DidResume).To(BeFalse())
+				Expect(client.ConnectionState().DidResume).To(BeFalse())
+
+				csc.EXPECT().Get(gomock.Any()).Return(state, true)
+				csc.EXPECT().Put(gomock.Any(), gomock.Any()).MaxTimes(1)
+				client, clientErr, server, serverErr = handshakeWithTLSConf(clientConf, serverConf)
+				Expect(clientErr).ToNot(HaveOccurred())
+				Expect(serverErr).ToNot(HaveOccurred())
+				Eventually(receivedSessionTicket).Should(BeClosed())
+				Expect(server.ConnectionState().DidResume).To(BeTrue())
+				Expect(client.ConnectionState().DidResume).To(BeTrue())
+				opener, err := server.Get0RTTOpener()
+				Expect(err).ToNot(HaveOccurred())
+				Expect(opener).ToNot(BeNil())
+				sealer, err := client.Get0RTTSealer()
+				Expect(err).ToNot(HaveOccurred())
+				Expect(sealer).ToNot(BeNil())
+				// use the 0-RTT sealer and opener to encrypt and decrypt a message
+				plaintext := []byte("Lorem ipsum dolor sit amet")
+				msg := sealer.Seal(nil, plaintext, 0x1337, []byte("foobar"))
+				decrypted, err := opener.Open(nil, msg, 0x1337, []byte("foobar"))
+				Expect(err).ToNot(HaveOccurred())
+				Expect(decrypted).To(Equal(plaintext))
+			})
 		})
 	})
 })

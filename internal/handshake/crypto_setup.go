@@ -368,7 +368,7 @@ func (h *cryptoSetup) handleMessageForServer(msgType messageType) bool {
 			h.logger.Debugf("Sending HelloRetryRequest")
 			return false
 		case data := <-h.paramsChan:
-			h.runner.OnReceivedParams(data)
+			h.handleTransportParameters(data)
 		case <-h.handshakeDone:
 			return false
 		}
@@ -433,7 +433,7 @@ func (h *cryptoSetup) handleMessageForClient(msgType messageType) bool {
 	case typeEncryptedExtensions:
 		select {
 		case data := <-h.paramsChan:
-			h.runner.OnReceivedParams(data)
+			h.handleTransportParameters(data)
 		case <-h.handshakeDone:
 			return false
 		}
@@ -458,6 +458,14 @@ func (h *cryptoSetup) handleMessageForClient(msgType messageType) bool {
 	default:
 		return false
 	}
+}
+
+func (h *cryptoSetup) handleTransportParameters(data []byte) {
+	var tp TransportParameters
+	if err := tp.Unmarshal(data, h.perspective.Opposite()); err != nil {
+		h.runner.OnError(qerr.Error(qerr.TransportParameterError, err.Error()))
+	}
+	h.runner.OnReceivedParams(&tp)
 }
 
 // only valid for the server

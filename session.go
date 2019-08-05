@@ -73,16 +73,16 @@ func (p *receivedPacket) Clone() *receivedPacket {
 }
 
 type handshakeRunner struct {
-	onReceivedParams    func([]byte)
+	onReceivedParams    func(*handshake.TransportParameters)
 	onError             func(error)
 	dropKeys            func(protocol.EncryptionLevel)
 	onHandshakeComplete func()
 }
 
-func (r *handshakeRunner) OnReceivedParams(b []byte)            { r.onReceivedParams(b) }
-func (r *handshakeRunner) OnError(e error)                      { r.onError(e) }
-func (r *handshakeRunner) DropKeys(el protocol.EncryptionLevel) { r.dropKeys(el) }
-func (r *handshakeRunner) OnHandshakeComplete()                 { r.onHandshakeComplete() }
+func (r *handshakeRunner) OnReceivedParams(tp *handshake.TransportParameters) { r.onReceivedParams(tp) }
+func (r *handshakeRunner) OnError(e error)                                    { r.onError(e) }
+func (r *handshakeRunner) DropKeys(el protocol.EncryptionLevel)               { r.dropKeys(el) }
+func (r *handshakeRunner) OnHandshakeComplete()                               { r.onHandshakeComplete() }
 
 type closeError struct {
 	err       error
@@ -995,19 +995,13 @@ func (s *session) dropEncryptionLevel(encLevel protocol.EncryptionLevel) {
 	s.receivedPacketHandler.DropPackets(encLevel)
 }
 
-func (s *session) processTransportParameters(data []byte) {
-	var params *handshake.TransportParameters
-	var err error
-	switch s.perspective {
-	case protocol.PerspectiveClient:
-		params, err = s.processTransportParametersForClient(data)
-	case protocol.PerspectiveServer:
-		params, err = s.processTransportParametersForServer(data)
-	}
-	if err != nil {
-		s.closeLocal(err)
+func (s *session) processTransportParameters(params *handshake.TransportParameters) {
+	// check the Retry token
+	if s.perspective == protocol.PerspectiveClient && !params.OriginalConnectionID.Equal(s.origDestConnID) {
+		s.closeLocal(fmt.Errorf("expected original_connection_id to equal %s, is %s", s.origDestConnID, params.OriginalConnectionID))
 		return
 	}
+
 	s.logger.Debugf("Received Transport Parameters: %s", params)
 	s.peerParams = params
 	if err := s.streamsMap.UpdateLimits(params); err != nil {
@@ -1024,28 +1018,6 @@ func (s *session) processTransportParameters(data []byte) {
 	// On the server side, the early session is ready as soon as we processed
 	// the client's transport parameters.
 	close(s.earlySessionReadyChan)
-}
-
-func (s *session) processTransportParametersForClient(data []byte) (*handshake.TransportParameters, error) {
-	params := &handshake.TransportParameters{}
-	if err := params.Unmarshal(data, s.perspective.Opposite()); err != nil {
-		return nil, err
-	}
-
-	// check the Retry token
-	if !params.OriginalConnectionID.Equal(s.origDestConnID) {
-		return nil, fmt.Errorf("expected original_connection_id to equal %s, is %s", s.origDestConnID, params.OriginalConnectionID)
-	}
-
-	return params, nil
-}
-
-func (s *session) processTransportParametersForServer(data []byte) (*handshake.TransportParameters, error) {
-	params := &handshake.TransportParameters{}
-	if err := params.Unmarshal(data, s.perspective.Opposite()); err != nil {
-		return nil, err
-	}
-	return params, nil
 }
 
 func (s *session) sendPackets() error {

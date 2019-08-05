@@ -1255,22 +1255,6 @@ var _ = Describe("Session", func() {
 	})
 
 	Context("transport parameters", func() {
-		It("errors if it can't unmarshal the TransportParameters", func() {
-			go func() {
-				defer GinkgoRecover()
-				cryptoSetup.EXPECT().RunHandshake().MaxTimes(1)
-				err := sess.run()
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("transport parameter"))
-			}()
-			streamManager.EXPECT().CloseWithError(gomock.Any())
-			sessionRunner.EXPECT().Retire(gomock.Any())
-			packer.EXPECT().PackConnectionClose(gomock.Any()).Return(&packedPacket{}, nil)
-			cryptoSetup.EXPECT().Close()
-			sess.processTransportParameters([]byte("invalid"))
-			Eventually(sess.Context().Done()).Should(BeClosed())
-		})
-
 		It("process transport parameters received from the client", func() {
 			go func() {
 				defer GinkgoRecover()
@@ -1287,7 +1271,7 @@ var _ = Describe("Session", func() {
 			streamManager.EXPECT().UpdateLimits(params)
 			packer.EXPECT().HandleTransportParameters(params)
 			Expect(sess.earlySessionReady()).ToNot(BeClosed())
-			sess.processTransportParameters(params.Marshal())
+			sess.processTransportParameters(params)
 			Expect(sess.earlySessionReady()).To(BeClosed())
 
 			// make the go routine return
@@ -1687,39 +1671,43 @@ var _ = Describe("Client Session", func() {
 	})
 
 	Context("transport parameters", func() {
-		It("errors if it can't unmarshal the TransportParameters", func() {
-			go func() {
-				defer GinkgoRecover()
-				cryptoSetup.EXPECT().RunHandshake().MaxTimes(1)
-				err := sess.run()
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("transport parameter"))
-			}()
-			// streamManager.EXPECT().CloseWithError(gomock.Any())
+		It("errors if the TransportParameters contain an original_connection_id, although no Retry was performed", func() {
 			sessionRunner.EXPECT().Retire(gomock.Any())
 			packer.EXPECT().PackConnectionClose(gomock.Any()).Return(&packedPacket{}, nil)
 			cryptoSetup.EXPECT().Close()
-			sess.processTransportParameters([]byte("invalid"))
-			Eventually(sess.Context().Done()).Should(BeClosed())
-		})
+			errChan := make(chan error)
+			go func() {
+				defer GinkgoRecover()
+				cryptoSetup.EXPECT().RunHandshake().MaxTimes(1)
+				errChan <- sess.run()
+			}()
 
-		It("errors if the TransportParameters contain an original_connection_id, although no Retry was performed", func() {
 			params := &handshake.TransportParameters{
 				OriginalConnectionID: protocol.ConnectionID{0xde, 0xca, 0xfb, 0xad},
 				StatelessResetToken:  &[16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
 			}
-			_, err := sess.processTransportParametersForClient(params.Marshal())
-			Expect(err).To(MatchError("expected original_connection_id to equal (empty), is 0xdecafbad"))
+			sess.processTransportParameters(params)
+			Eventually(errChan).Should(Receive(MatchError("expected original_connection_id to equal (empty), is 0xdecafbad")))
 		})
 
 		It("errors if the TransportParameters contain an original_connection_id, although no Retry was performed", func() {
+			sessionRunner.EXPECT().Retire(gomock.Any())
+			packer.EXPECT().PackConnectionClose(gomock.Any()).Return(&packedPacket{}, nil)
+			cryptoSetup.EXPECT().Close()
+			errChan := make(chan error)
+			go func() {
+				defer GinkgoRecover()
+				cryptoSetup.EXPECT().RunHandshake().MaxTimes(1)
+				errChan <- sess.run()
+			}()
+
 			sess.origDestConnID = protocol.ConnectionID{0xde, 0xad, 0xbe, 0xef}
 			params := &handshake.TransportParameters{
 				OriginalConnectionID: protocol.ConnectionID{0xde, 0xca, 0xfb, 0xad},
 				StatelessResetToken:  &[16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
 			}
-			_, err := sess.processTransportParametersForClient(params.Marshal())
-			Expect(err).To(MatchError("expected original_connection_id to equal 0xdeadbeef, is 0xdecafbad"))
+			sess.processTransportParameters(params)
+			Eventually(errChan).Should(Receive(MatchError("expected original_connection_id to equal 0xdeadbeef, is 0xdecafbad")))
 		})
 	})
 

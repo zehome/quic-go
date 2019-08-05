@@ -429,11 +429,11 @@ var _ = Describe("Crypto Setup TLS", func() {
 		})
 
 		It("receives transport parameters", func() {
-			var cTransportParametersRcvd, sTransportParametersRcvd []byte
+			var cTransportParametersRcvd, sTransportParametersRcvd *TransportParameters
 			cChunkChan, cInitialStream, cHandshakeStream, _ := initStreams()
 			cTransportParameters := &TransportParameters{IdleTimeout: 0x42 * time.Second}
 			cRunner := NewMockHandshakeRunner(mockCtrl)
-			cRunner.EXPECT().OnReceivedParams(gomock.Any()).Do(func(b []byte) { sTransportParametersRcvd = b })
+			cRunner.EXPECT().OnReceivedParams(gomock.Any()).Do(func(tp *TransportParameters) { sTransportParametersRcvd = tp })
 			cRunner.EXPECT().OnHandshakeComplete()
 			client, _, err := NewCryptoSetupClient(
 				cInitialStream,
@@ -452,7 +452,7 @@ var _ = Describe("Crypto Setup TLS", func() {
 			sChunkChan, sInitialStream, sHandshakeStream, _ := initStreams()
 			var token [16]byte
 			sRunner := NewMockHandshakeRunner(mockCtrl)
-			sRunner.EXPECT().OnReceivedParams(gomock.Any()).Do(func(b []byte) { cTransportParametersRcvd = b })
+			sRunner.EXPECT().OnReceivedParams(gomock.Any()).Do(func(tp *TransportParameters) { cTransportParametersRcvd = tp })
 			sRunner.EXPECT().OnHandshakeComplete()
 			sTransportParameters := &TransportParameters{
 				IdleTimeout:         0x1337 * time.Second,
@@ -479,14 +479,9 @@ var _ = Describe("Crypto Setup TLS", func() {
 				close(done)
 			}()
 			Eventually(done).Should(BeClosed())
-			Expect(cTransportParametersRcvd).ToNot(BeNil())
-			clTP := &TransportParameters{}
-			Expect(clTP.Unmarshal(cTransportParametersRcvd, protocol.PerspectiveClient)).To(Succeed())
-			Expect(clTP.IdleTimeout).To(Equal(cTransportParameters.IdleTimeout))
+			Expect(cTransportParametersRcvd.IdleTimeout).To(Equal(cTransportParameters.IdleTimeout))
 			Expect(sTransportParametersRcvd).ToNot(BeNil())
-			srvTP := &TransportParameters{}
-			Expect(srvTP.Unmarshal(sTransportParametersRcvd, protocol.PerspectiveServer)).To(Succeed())
-			Expect(srvTP.IdleTimeout).To(Equal(sTransportParameters.IdleTimeout))
+			Expect(sTransportParametersRcvd.IdleTimeout).To(Equal(sTransportParameters.IdleTimeout))
 		})
 
 		Context("with session tickets", func() {

@@ -40,6 +40,8 @@ func tlsConfigToQtlsConfig(
 	c *tls.Config,
 	recordLayer qtls.RecordLayer,
 	extHandler tlsExtensionHandler,
+	getDataForSessionState func() []byte,
+	setDataFromSessionState func([]byte),
 	accept0RTT func([]byte) bool,
 ) *qtls.Config {
 	if c == nil {
@@ -67,12 +69,12 @@ func tlsConfigToQtlsConfig(
 			if tlsConf == nil {
 				return nil, nil
 			}
-			return tlsConfigToQtlsConfig(tlsConf, recordLayer, extHandler, accept0RTT), nil
+			return tlsConfigToQtlsConfig(tlsConf, recordLayer, extHandler, getDataForSessionState, setDataFromSessionState, accept0RTT), nil
 		}
 	}
 	var csc qtls.ClientSessionCache
 	if c.ClientSessionCache != nil {
-		csc = &clientSessionCache{ClientSessionCache: c.ClientSessionCache}
+		csc = newClientSessionCache(c.ClientSessionCache, getDataForSessionState, setDataFromSessionState)
 	}
 	return &qtls.Config{
 		Rand:                        c.Rand,

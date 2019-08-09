@@ -67,6 +67,7 @@ type cryptoSetup struct {
 	messageChan chan []byte
 
 	ourParams  *TransportParameters
+	peerParams *TransportParameters
 	paramsChan <-chan []byte
 
 	runner handshakeRunner
@@ -78,8 +79,9 @@ type cryptoSetup struct {
 	// is closed when Close() is called
 	closeChan chan struct{}
 
+	zeroRTTParameters      *TransportParameters
 	clientHelloWritten     bool
-	clientHelloWrittenChan chan struct{}
+	clientHelloWrittenChan chan *TransportParameters
 
 	receivedWriteKey chan struct{}
 	receivedReadKey  chan struct{}
@@ -131,7 +133,7 @@ func NewCryptoSetupClient(
 	tlsConf *tls.Config,
 	rttStats *congestion.RTTStats,
 	logger utils.Logger,
-) (CryptoSetup, <-chan struct{} /* ClientHello written */, error) {
+) (CryptoSetup, <-chan *TransportParameters /* ClientHello written. Receive nil for non-0-RTT */, error) {
 	cs, clientHelloWritten, err := newCryptoSetup(
 		initialStream,
 		handshakeStream,
@@ -194,7 +196,7 @@ func newCryptoSetup(
 	rttStats *congestion.RTTStats,
 	logger utils.Logger,
 	perspective protocol.Perspective,
-) (*cryptoSetup, <-chan struct{} /* ClientHello written */, error) {
+) (*cryptoSetup, <-chan *TransportParameters /* ClientHello written. Receive nil for non-0-RTT */, error) {
 	initialSealer, initialOpener, err := NewInitialAEAD(connID, perspective)
 	if err != nil {
 		return nil, nil, err
@@ -216,14 +218,14 @@ func newCryptoSetup(
 		perspective:            perspective,
 		handshakeDone:          make(chan struct{}),
 		alertChan:              make(chan uint8),
-		clientHelloWrittenChan: make(chan struct{}),
+		clientHelloWrittenChan: make(chan *TransportParameters, 1),
 		messageChan:            make(chan []byte, 100),
 		receivedReadKey:        make(chan struct{}),
 		receivedWriteKey:       make(chan struct{}),
 		writeRecord:            make(chan struct{}, 1),
 		closeChan:              make(chan struct{}),
 	}
-	qtlsConf := tlsConfigToQtlsConfig(tlsConf, cs, extHandler, cs.accept0RTT)
+	qtlsConf := tlsConfigToQtlsConfig(tlsConf, cs, extHandler, cs.marshalPeerParamsForSessionState, cs.handlePeerParamsFromSessionState, cs.accept0RTT)
 	cs.tlsConf = qtlsConf
 	return cs, cs.clientHelloWrittenChan, nil
 }
@@ -465,7 +467,21 @@ func (h *cryptoSetup) handleTransportParameters(data []byte) {
 	if err := tp.Unmarshal(data, h.perspective.Opposite()); err != nil {
 		h.runner.OnError(qerr.Error(qerr.TransportParameterError, err.Error()))
 	}
-	h.runner.OnReceivedParams(&tp)
+	h.peerParams = &tp
+	h.runner.OnReceivedParams(h.peerParams)
+}
+
+// must be called after receiving the transport parameters
+func (h *cryptoSetup) marshalPeerParamsForSessionState() []byte {
+	return h.peerParams.MarshalForSessionTicket()
+}
+
+func (h *cryptoSetup) handlePeerParamsFromSessionState(data []byte) {
+	var tp TransportParameters
+	if err := tp.Unmarshal(data, protocol.PerspectiveServer); err != nil {
+		h.logger.Debugf("Restoring of transport parameters from session ticket failed: %s", err.Error())
+	}
+	h.zeroRTTParameters = &tp
 }
 
 // only valid for the server
@@ -594,7 +610,13 @@ func (h *cryptoSetup) WriteRecord(p []byte) (int, error) {
 		n, err := h.initialStream.Write(p)
 		if !h.clientHelloWritten && h.perspective == protocol.PerspectiveClient {
 			h.clientHelloWritten = true
-			close(h.clientHelloWrittenChan)
+			if h.zeroRTTSealer != nil && h.zeroRTTParameters != nil {
+				h.logger.Debugf("Doing 0-RTT.")
+				h.clientHelloWrittenChan <- h.zeroRTTParameters
+			} else {
+				h.logger.Debugf("Not doing 0-RTT. Has Sealer: %t, has params: %t", h.zeroRTTSealer != nil, h.zeroRTTParameters != nil)
+				h.clientHelloWrittenChan <- nil
+			}
 		} else {
 			// We need additional signaling to properly detect HelloRetryRequests.
 			// For servers: when the ServerHello is written.

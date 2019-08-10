@@ -53,6 +53,8 @@ func (p *packedPacket) EncryptionLevel() protocol.EncryptionLevel {
 		return protocol.EncryptionInitial
 	case protocol.PacketTypeHandshake:
 		return protocol.EncryptionHandshake
+	case protocol.PacketType0RTT:
+		return protocol.Encryption0RTT
 	default:
 		return protocol.EncryptionUnspecified
 	}
@@ -99,6 +101,7 @@ type packetNumberManager interface {
 type sealingManager interface {
 	GetInitialSealer() (handshake.LongHeaderSealer, error)
 	GetHandshakeSealer() (handshake.LongHeaderSealer, error)
+	Get0RTTSealer() (handshake.LongHeaderSealer, error)
 	Get1RTTSealer() (handshake.ShortHeaderSealer, error)
 }
 
@@ -321,12 +324,26 @@ func (p *packetPacker) PackPacket() (*packedPacket, error) {
 		}
 	}
 
-	sealer, err := p.cryptoSetup.Get1RTTSealer()
-	if err != nil {
-		// sealer not yet available
-		return nil, nil
+	var sealer sealer
+	var header *wire.ExtendedHeader
+	var encLevel protocol.EncryptionLevel
+	oneRTTSealer, err := p.cryptoSetup.Get1RTTSealer()
+	if err == nil {
+		encLevel = protocol.Encryption1RTT
+		sealer = oneRTTSealer
+		header = p.getShortHeader(oneRTTSealer.KeyPhase())
+	} else {
+		// 1-RTT sealer not yet available
+		if p.perspective != protocol.PerspectiveClient {
+			return nil, nil
+		}
+		sealer, err = p.cryptoSetup.Get0RTTSealer()
+		if sealer == nil || err != nil {
+			return nil, nil
+		}
+		encLevel = protocol.Encryption0RTT
+		header = p.getLongHeader(protocol.Encryption0RTT)
 	}
-	header := p.getShortHeader(sealer.KeyPhase())
 	headerLen := header.GetLength(p.version)
 
 	maxSize := p.maxPacketSize - protocol.ByteCount(sealer.Overhead()) - headerLen
@@ -352,7 +369,7 @@ func (p *packetPacker) PackPacket() (*packedPacket, error) {
 		p.numNonAckElicitingAcks = 0
 	}
 
-	return p.writeAndSealPacket(header, payload, protocol.Encryption1RTT, sealer)
+	return p.writeAndSealPacket(header, payload, encLevel, sealer)
 }
 
 func (p *packetPacker) maybePackCryptoPacket() (*packedPacket, error) {
@@ -411,6 +428,7 @@ func (p *packetPacker) maybePackCryptoPacket() (*packedPacket, error) {
 func (p *packetPacker) composeNextPacket(maxFrameSize protocol.ByteCount) (payload, error) {
 	var payload payload
 
+	// TODO: we don't need to request ACKs when sending 0-RTT packets
 	if ack := p.acks.GetAckFrame(protocol.Encryption1RTT); ack != nil {
 		payload.ack = ack
 		payload.length += ack.Length(p.version)
@@ -435,6 +453,13 @@ func (p *packetPacker) getSealerAndHeader(encLevel protocol.EncryptionLevel) (se
 			return nil, nil, err
 		}
 		hdr := p.getLongHeader(protocol.EncryptionInitial)
+		return sealer, hdr, nil
+	case protocol.Encryption0RTT:
+		sealer, err := p.cryptoSetup.Get0RTTSealer()
+		if err != nil {
+			return nil, nil, err
+		}
+		hdr := p.getLongHeader(protocol.Encryption0RTT)
 		return sealer, hdr, nil
 	case protocol.EncryptionHandshake:
 		sealer, err := p.cryptoSetup.GetHandshakeSealer()
@@ -477,11 +502,13 @@ func (p *packetPacker) getLongHeader(encLevel protocol.EncryptionLevel) *wire.Ex
 		hdr.Type = protocol.PacketTypeInitial
 	case protocol.EncryptionHandshake:
 		hdr.Type = protocol.PacketTypeHandshake
+	case protocol.Encryption0RTT:
+		hdr.Type = protocol.PacketType0RTT
 	}
 
 	hdr.Version = p.version
 	hdr.IsLongHeader = true
-	// Always send Initial and Handshake packets with the maximum packet number length.
+	// Always send long header packets with the maximum packet number length.
 	// This simplifies retransmissions: Since the header can't get any larger,
 	// we don't need to split CRYPTO frames.
 	hdr.PacketNumberLen = protocol.PacketNumberLen4

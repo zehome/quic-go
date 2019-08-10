@@ -260,9 +260,23 @@ func (p *packetPacker) PackRetransmission(packet *ackhandler.Packet) ([]*packedP
 		var frames []wire.Frame
 		var length protocol.ByteCount
 
-		sealer, hdr, err := p.getSealerAndHeader(packet.EncryptionLevel)
+		encLevel := packet.EncryptionLevel
+
+		// 0-RTT packets require special care here.
+		// After a Retry, we need to retransmit 0-RTT packets using 0-RTT keys.
+		// Otherwise, if we're dealing with actual packet loss, 0-RTT packets need to
+		// be retransmitted using 1-RTT keys. We achieve this by dropping the 0-RTT
+		// write keys as soon as 1-RTT keys become available.
+		sealer, hdr, err := p.getSealerAndHeader(encLevel)
 		if err != nil {
-			return nil, err
+			if encLevel != protocol.Encryption0RTT {
+				return nil, err
+			}
+			encLevel = protocol.Encryption1RTT
+			sealer, hdr, err = p.getSealerAndHeader(encLevel)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		hdrLen := hdr.GetLength(p.version)
@@ -302,7 +316,7 @@ func (p *packetPacker) PackRetransmission(packet *ackhandler.Packet) ([]*packedP
 			sf.DataLenPresent = false
 			length += sf.Length(p.version) - sfLen
 		}
-		p, err := p.writeAndSealPacket(hdr, payload{frames: frames, length: length}, packet.EncryptionLevel, sealer)
+		p, err := p.writeAndSealPacket(hdr, payload{frames: frames, length: length}, encLevel, sealer)
 		if err != nil {
 			return nil, err
 		}

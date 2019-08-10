@@ -745,6 +745,47 @@ var _ = Describe("Packet packer", func() {
 					Expect(sf2.StreamID).To(Equal(protocol.StreamID(5)))
 					Expect(sf2.DataLenPresent).To(BeFalse())
 				})
+
+				It("retransmits 0-RTT packets as 0-RTT packets, if 0-RTT keys are still available", func() {
+					pnManager.EXPECT().PeekPacketNumber(protocol.Encryption0RTT).Return(protocol.PacketNumber(0x42), protocol.PacketNumberLen2)
+					pnManager.EXPECT().PopPacketNumber(protocol.Encryption0RTT).Return(protocol.PacketNumber(0x42))
+					sealingManager.EXPECT().Get0RTTSealer().Return(sealer, nil)
+					frames := []wire.Frame{
+						&wire.MaxDataFrame{ByteOffset: 0x1234},
+						&wire.StreamFrame{StreamID: 42, Data: []byte("foobar")},
+					}
+					packets, err := packer.PackRetransmission(&ackhandler.Packet{
+						EncryptionLevel: protocol.Encryption0RTT,
+						Frames:          frames,
+					})
+					Expect(err).ToNot(HaveOccurred())
+					Expect(packets).To(HaveLen(1))
+					p := packets[0]
+					Expect(p.EncryptionLevel()).To(Equal(protocol.Encryption0RTT))
+					Expect(p.frames).To(Equal(frames))
+				})
+
+				It("retransmits 0-RTT packets as 1-RTT packets, if 0-RTT keys are already dropped", func() {
+					pnManager.EXPECT().PeekPacketNumber(protocol.Encryption1RTT).Return(protocol.PacketNumber(0x42), protocol.PacketNumberLen2)
+					pnManager.EXPECT().PopPacketNumber(protocol.Encryption1RTT).Return(protocol.PacketNumber(0x42))
+					gomock.InOrder(
+						sealingManager.EXPECT().Get0RTTSealer().Return(nil, errors.New("not available")),
+						sealingManager.EXPECT().Get1RTTSealer().Return(sealer, nil),
+					)
+					frames := []wire.Frame{
+						&wire.MaxDataFrame{ByteOffset: 0x1234},
+						&wire.StreamFrame{StreamID: 42, Data: []byte("foobar")},
+					}
+					packets, err := packer.PackRetransmission(&ackhandler.Packet{
+						EncryptionLevel: protocol.Encryption0RTT,
+						Frames:          frames,
+					})
+					Expect(err).ToNot(HaveOccurred())
+					Expect(packets).To(HaveLen(1))
+					p := packets[0]
+					Expect(p.EncryptionLevel()).To(Equal(protocol.Encryption1RTT))
+					Expect(p.frames).To(Equal(frames))
+				})
 			})
 
 			Context("max packet size", func() {

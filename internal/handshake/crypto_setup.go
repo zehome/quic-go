@@ -592,6 +592,8 @@ func (h *cryptoSetup) SetWriteKey(encLevel qtls.EncryptionLevel, suite *qtls.Cip
 		h.aead.SetWriteKey(suite, trafficSecret)
 		h.has1RTTSealer = true
 		h.logger.Debugf("Installed 1-RTT Write keys")
+		h.zeroRTTSealer = nil
+		h.logger.Debugf("Dropping 0-RTT keys.")
 	default:
 		panic("unexpected write encryption level")
 	}

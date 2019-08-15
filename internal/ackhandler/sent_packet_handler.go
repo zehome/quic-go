@@ -659,11 +659,20 @@ func (h *sentPacketHandler) ResetForRetry() error {
 		}
 		return true, nil
 	})
+	// All application data packets sent at this point are 0-RTT packets.
+	// In the case of a Retry, we can assume that the server dropped all of them.
+	h.appDataPackets.history.Iterate(func(p *Packet) (bool, error) {
+		if p.canBeRetransmitted {
+			packets = append(packets, p)
+		}
+		return true, nil
+	})
 	for _, p := range packets {
-		h.logger.Debugf("Queueing packet %#x for retransmission.", p.PacketNumber)
+		h.logger.Debugf("Queueing packet %#x (%s) for retransmission.", p.PacketNumber, p.EncryptionLevel)
 		h.retransmissionQueue = append(h.retransmissionQueue, p)
 	}
 	h.initialPackets = newPacketNumberSpace(h.initialPackets.pns.Pop())
+	h.appDataPackets = newPacketNumberSpace(h.appDataPackets.pns.Pop())
 	h.setLossDetectionTimer()
 	return nil
 }

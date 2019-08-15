@@ -958,5 +958,34 @@ var _ = Describe("SentPacketHandler", func() {
 			Expect(p.PacketNumber).To(Equal(packet.PacketNumber))
 			Expect(p.Frames).To(Equal(packet.Frames))
 		})
+
+		It("queues outstanding packets for retransmission and cancels alarms", func() {
+			handler.SentPacket(&Packet{
+				PacketNumber:    13,
+				EncryptionLevel: protocol.EncryptionInitial,
+				Frames:          []wire.Frame{&wire.CryptoFrame{Data: []byte("foobar")}},
+				Length:          100,
+			})
+			pn := handler.PopPacketNumber(protocol.Encryption0RTT)
+			handler.SentPacket(&Packet{
+				PacketNumber:    pn,
+				EncryptionLevel: protocol.Encryption0RTT,
+				Frames:          []wire.Frame{&wire.StreamFrame{Data: []byte("foobar")}},
+				Length:          999,
+			})
+			Expect(handler.bytesInFlight).ToNot(BeZero())
+			// now receive a Retry
+			Expect(handler.ResetForRetry()).To(Succeed())
+			Expect(handler.bytesInFlight).To(BeZero())
+			Expect(handler.SendMode()).To(Equal(SendRetransmission))
+			p := handler.DequeuePacketForRetransmission()
+			Expect(p.PacketNumber).To(Equal(protocol.PacketNumber(13)))
+			Expect(p.EncryptionLevel).To(Equal(protocol.EncryptionInitial))
+			p = handler.DequeuePacketForRetransmission()
+			Expect(p.PacketNumber).To(Equal(pn))
+			Expect(p.EncryptionLevel).To(Equal(protocol.Encryption0RTT))
+			// make sure we keep increasing the packet number for 0-RTT packets
+			Expect(handler.PopPacketNumber(protocol.Encryption0RTT)).To(BeNumerically(">", pn))
+		})
 	})
 })

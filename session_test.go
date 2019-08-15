@@ -1155,6 +1155,7 @@ var _ = Describe("Session", func() {
 
 	It("cancels the HandshakeComplete context when the handshake completes", func() {
 		packer.EXPECT().PackPacket().AnyTimes()
+		sessionRunner.EXPECT().Retire(gomock.Any())
 		finishHandshake := make(chan struct{})
 		go func() {
 			defer GinkgoRecover()
@@ -1194,7 +1195,7 @@ var _ = Describe("Session", func() {
 		Eventually(sess.Context().Done()).Should(BeClosed())
 	})
 
-	It("sends a 1-RTT packet when the handshake completes", func() {
+	It("sends a 1-RTT packet and retires the initial connection ID when the handshake completes", func() {
 		done := make(chan struct{})
 		packer.EXPECT().PackPacket().DoAndReturn(func() (*packedPacket, error) {
 			defer close(done)
@@ -1203,6 +1204,7 @@ var _ = Describe("Session", func() {
 				buffer: getPacketBuffer(),
 			}, nil
 		})
+		sessionRunner.EXPECT().Retire(protocol.ConnectionID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
 		packer.EXPECT().PackPacket().AnyTimes()
 		go func() {
 			defer GinkgoRecover()
@@ -1428,6 +1430,7 @@ var _ = Describe("Session", func() {
 
 		It("closes the session due to the idle timeout after handshake", func() {
 			packer.EXPECT().PackPacket().AnyTimes()
+			sessionRunner.EXPECT().Retire(gomock.Any())
 			sessionRunner.EXPECT().Remove(gomock.Any())
 			cryptoSetup.EXPECT().Close()
 			sess.config.IdleTimeout = 0

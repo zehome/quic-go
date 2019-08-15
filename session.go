@@ -96,9 +96,10 @@ var errCloseForRecreating = errors.New("closing session in order to recreate it"
 type session struct {
 	sessionRunner sessionRunner
 
-	destConnID     protocol.ConnectionID
-	origDestConnID protocol.ConnectionID // if the server sends a Retry, this is the connection ID we used initially
-	srcConnID      protocol.ConnectionID
+	destConnID       protocol.ConnectionID
+	clientDestConnID protocol.ConnectionID // only set for the server. This is the conn ID the client used on the first Initial.
+	origDestConnID   protocol.ConnectionID // if the server sends a Retry, this is the connection ID we used initially
+	srcConnID        protocol.ConnectionID
 
 	perspective    protocol.Perspective
 	initialVersion protocol.VersionNumber // if version negotiation is performed, this is the version we initially tried
@@ -193,6 +194,7 @@ var newSession = func(
 		config:                conf,
 		srcConnID:             srcConnID,
 		destConnID:            destConnID,
+		clientDestConnID:      clientDestConnID,
 		tokenGenerator:        tokenGenerator,
 		perspective:           protocol.PerspectiveServer,
 		handshakeCompleteChan: make(chan struct{}),
@@ -385,6 +387,7 @@ func (s *session) run() error {
 			if zeroRTTParams != nil {
 				s.logger.Debugf("closing the chan")
 				s.processTransportParameters(zeroRTTParams)
+				close(s.earlySessionReadyChan)
 			}
 		case closeErr := <-s.closeChan:
 			// put the close error back into the channel, so that the run loop can receive it
@@ -526,11 +529,13 @@ func (s *session) handleHandshakeComplete() {
 	s.handshakeCompleteChan = nil // prevent this case from ever being selected again
 	s.handshakeCtxCancel()
 
-	// The client completes the handshake first (after sending the CFIN).
-	// We need to make sure it learns about the server completing the handshake,
-	// in order to stop retransmitting handshake packets.
-	// They will stop retransmitting handshake packets when receiving the first 1-RTT packet.
 	if s.perspective == protocol.PerspectiveServer {
+		s.sessionRunner.Retire(s.clientDestConnID)
+
+		// The client completes the handshake first (after sending the CFIN).
+		// We need to make sure it learns about the server completing the handshake,
+		// in order to stop retransmitting handshake packets.
+		// They will stop retransmitting handshake packets when receiving the first 1-RTT packet.
 		token, err := s.tokenGenerator.NewToken(s.conn.RemoteAddr())
 		if err != nil {
 			s.closeLocal(err)

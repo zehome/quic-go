@@ -23,6 +23,8 @@ type client struct {
 	// If it is started with Dial, we take a packet conn as a parameter.
 	createdPacketConn bool
 
+	use0RTT bool
+
 	packetHandlers packetHandlerManager
 
 	versionNegotiated                utils.AtomicBool // has the server accepted our version
@@ -66,6 +68,18 @@ func DialAddr(
 	return DialAddrContext(context.Background(), addr, tlsConf, config)
 }
 
+// DialAddrEarly establishes a new 0-RTT QUIC connection to a server.
+// It uses a new UDP connection and closes this connection when the QUIC session is closed.
+// The hostname for SNI is taken from the given address.
+func DialAddrEarly(
+	addr string,
+	tlsConf *tls.Config,
+	config *Config,
+) (EarlySession, error) {
+	defer utils.Logger.WithPrefix(utils.DefaultLogger, "client").Debugf("Returning early session")
+	return dialAddrContext(context.Background(), addr, tlsConf, config, true)
+}
+
 // DialAddrContext establishes a new QUIC connection to a server using the provided context.
 // See DialAddr for details.
 func DialAddrContext(
@@ -74,6 +88,16 @@ func DialAddrContext(
 	tlsConf *tls.Config,
 	config *Config,
 ) (Session, error) {
+	return dialAddrContext(ctx, addr, tlsConf, config, false)
+}
+
+func dialAddrContext(
+	ctx context.Context,
+	addr string,
+	tlsConf *tls.Config,
+	config *Config,
+	use0RTT bool,
+) (quicSession, error) {
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return nil, err
@@ -82,7 +106,7 @@ func DialAddrContext(
 	if err != nil {
 		return nil, err
 	}
-	return dialContext(ctx, udpConn, udpAddr, addr, tlsConf, config, true)
+	return dialContext(ctx, udpConn, udpAddr, addr, tlsConf, config, use0RTT, true)
 }
 
 // Dial establishes a new QUIC connection to a server using a net.PacketConn.
@@ -97,7 +121,22 @@ func Dial(
 	tlsConf *tls.Config,
 	config *Config,
 ) (Session, error) {
-	return DialContext(context.Background(), pconn, remoteAddr, host, tlsConf, config)
+	return dialContext(context.Background(), pconn, remoteAddr, host, tlsConf, config, false, false)
+}
+
+// DialEarly establishes a new 0-RTT QUIC connection to a server using a net.PacketConn.
+// The same PacketConn can be used for multiple calls to Dial and Listen,
+// QUIC connection IDs are used for demultiplexing the different connections.
+// The host parameter is used for SNI.
+// The tls.Config must define an application protocol (using NextProtos).
+func DialEarly(
+	pconn net.PacketConn,
+	remoteAddr net.Addr,
+	host string,
+	tlsConf *tls.Config,
+	config *Config,
+) (Session, error) {
+	return dialContext(context.Background(), pconn, remoteAddr, host, tlsConf, config, true, false)
 }
 
 // DialContext establishes a new QUIC connection to a server using a net.PacketConn using the provided context.
@@ -110,7 +149,7 @@ func DialContext(
 	tlsConf *tls.Config,
 	config *Config,
 ) (Session, error) {
-	return dialContext(ctx, pconn, remoteAddr, host, tlsConf, config, false)
+	return dialContext(ctx, pconn, remoteAddr, host, tlsConf, config, false, false)
 }
 
 func dialContext(
@@ -120,8 +159,9 @@ func dialContext(
 	host string,
 	tlsConf *tls.Config,
 	config *Config,
+	use0RTT bool,
 	createdPacketConn bool,
-) (Session, error) {
+) (quicSession, error) {
 	if tlsConf == nil {
 		return nil, errors.New("quic: tls.Config not set")
 	}
@@ -130,7 +170,7 @@ func dialContext(
 	if err != nil {
 		return nil, err
 	}
-	c, err := newClient(pconn, remoteAddr, config, tlsConf, host, createdPacketConn)
+	c, err := newClient(pconn, remoteAddr, config, tlsConf, host, use0RTT, createdPacketConn)
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +187,7 @@ func newClient(
 	config *Config,
 	tlsConf *tls.Config,
 	host string,
+	use0RTT bool,
 	createdPacketConn bool,
 ) (*client, error) {
 	if tlsConf == nil {
@@ -187,6 +228,7 @@ func newClient(
 		destConnID:        destConnID,
 		conn:              &conn{pconn: pconn, currentAddr: remoteAddr},
 		createdPacketConn: createdPacketConn,
+		use0RTT:           use0RTT,
 		tlsConf:           tlsConf,
 		config:            config,
 		version:           config.Versions[0],
@@ -285,6 +327,13 @@ func (c *client) establishSecureConnection(ctx context.Context) error {
 		errorChan <- err
 	}()
 
+	// only set when we're using 0-RTT
+	// Otherwise, earlySessionChan will be nil. Receiving from a nil chan blocks forever.
+	var earlySessionChan <-chan struct{}
+	if c.use0RTT {
+		earlySessionChan = c.session.earlySessionReady()
+	}
+
 	select {
 	case <-ctx.Done():
 		// The session will send a PeerGoingAway error to the server.
@@ -292,6 +341,9 @@ func (c *client) establishSecureConnection(ctx context.Context) error {
 		return ctx.Err()
 	case err := <-errorChan:
 		return err
+	case <-earlySessionChan:
+		// ready to send 0-RTT data
+		return nil
 	case <-c.session.HandshakeComplete().Done():
 		// handshake successfully completed
 		return nil

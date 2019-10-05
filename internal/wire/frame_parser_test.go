@@ -308,6 +308,7 @@ var _ = Describe("Frame parsing", func() {
 			&PathChallengeFrame{},
 			&PathResponseFrame{},
 			&ConnectionCloseFrame{},
+			&DatagramFrame{},
 		}
 
 		var framesSerialized [][]byte

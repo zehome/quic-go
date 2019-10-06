@@ -35,10 +35,13 @@ func (t PacketType) String() string {
 }
 
 // A ByteCount in QUIC
-type ByteCount uint64
+type ByteCount int64
 
 // MaxByteCount is the maximum value of a ByteCount
 const MaxByteCount = ByteCount(1<<62 - 1)
+
+// InvalidByteCount is an invalid byte count
+const InvalidByteCount ByteCount = -1
 
 // An ApplicationErrorCode is an application-defined error code.
 type ApplicationErrorCode uint64

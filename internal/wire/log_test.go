@@ -37,33 +37,33 @@ var _ = Describe("Frame logging", func() {
 	})
 
 	It("logs sent frames", func() {
-		LogFrame(logger, &ResetStreamFrame{}, true)
-		Expect(buf.Bytes()).To(ContainSubstring("\t-> &wire.ResetStreamFrame{StreamID:0, ErrorCode:0x0, ByteOffset:0x0}\n"))
+		LogFrame(logger, &ResetStreamFrame{ByteOffset: 123}, true)
+		Expect(buf.String()).To(ContainSubstring("\t-> &wire.ResetStreamFrame{StreamID:0, ErrorCode:0x0, ByteOffset:123}\n"))
 	})
 
 	It("logs received frames", func() {
 		LogFrame(logger, &ResetStreamFrame{}, false)
-		Expect(buf.Bytes()).To(ContainSubstring("\t<- &wire.ResetStreamFrame{StreamID:0, ErrorCode:0x0, ByteOffset:0x0}\n"))
+		Expect(buf.String()).To(ContainSubstring("\t<- &wire.ResetStreamFrame{StreamID:0, ErrorCode:0x0, ByteOffset:0}\n"))
 	})
 
 	It("logs CRYPTO frames", func() {
 		frame := &CryptoFrame{
-			Offset: 0x42,
-			Data:   make([]byte, 0x123),
+			Offset: 42,
+			Data:   make([]byte, 123),
 		}
 		LogFrame(logger, frame, false)
-		Expect(buf.Bytes()).To(ContainSubstring("\t<- &wire.CryptoFrame{Offset: 0x42, Data length: 0x123, Offset + Data length: 0x165}\n"))
+		Expect(buf.String()).To(ContainSubstring("\t<- &wire.CryptoFrame{Offset: 42, Data length: 123, Offset + Data length: 165}\n"))
 
 	})
 
 	It("logs STREAM frames", func() {
 		frame := &StreamFrame{
 			StreamID: 42,
-			Offset:   0x1337,
-			Data:     bytes.Repeat([]byte{'f'}, 0x100),
+			Offset:   1337,
+			Data:     bytes.Repeat([]byte{'f'}, 100),
 		}
 		LogFrame(logger, frame, false)
-		Expect(buf.Bytes()).To(ContainSubstring("\t<- &wire.StreamFrame{StreamID: 42, FinBit: false, Offset: 0x1337, Data length: 0x100, Offset + Data length: 0x1437}\n"))
+		Expect(buf.String()).To(ContainSubstring("\t<- &wire.StreamFrame{StreamID: 42, FinBit: false, Offset: 1337, Data length: 100, Offset + Data length: 1437}\n"))
 	})
 
 	It("logs ACK frames without missing packets", func() {

@@ -464,6 +464,10 @@ func (s *baseServer) createNewSession(
 		OriginalConnectionID:           origDestConnID,
 		MaxDatagramFrameSize:           protocol.InvalidByteCount, // disable DATAGRAMs
 	}
+	if s.config.EnableDatagrams {
+		params.MaxDatagramFrameSize = protocol.MaxDatagramFrameSize
+	}
+
 	sess, err := s.newSession(
 		&conn{pconn: s.conn, currentAddr: remoteAddr},
 		s.sessionHandler,

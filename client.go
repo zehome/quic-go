@@ -372,6 +372,9 @@ func (c *client) createNewTLSSession(_ protocol.VersionNumber) error {
 		DisableMigration:               true,
 		MaxDatagramFrameSize:           protocol.InvalidByteCount, // disable DATAGRAMs
 	}
+	if c.config.EnableDatagrams {
+		params.MaxDatagramFrameSize = protocol.MaxDatagramFrameSize
+	}
 
 	c.mutex.Lock()
 	defer c.mutex.Unlock()

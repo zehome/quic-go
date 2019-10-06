@@ -372,6 +372,9 @@ func (s *session) preSetup() {
 			s.config.QuicTracer.Trace(s.origDestConnID, ev)
 		}
 	}
+	if s.config.EnableDatagrams {
+		s.datagramQueue = newDatagramQueue(s.scheduleSending)
+	}
 }
 
 func (s *session) postSetup() {
@@ -802,6 +805,8 @@ func (s *session) handleFrame(f wire.Frame, pn protocol.PacketNumber, encLevel p
 	case *wire.RetireConnectionIDFrame:
 		// since we don't send new connection IDs, we don't expect retirements
 		err = errors.New("unexpected RETIRE_CONNECTION_ID frame")
+	case *wire.DatagramFrame:
+		// TODO: handle DATRAGRAM frames
 	default:
 		err = fmt.Errorf("unexpected frame type: %s", reflect.ValueOf(&frame).Elem().Type().Name())
 	}
@@ -1339,6 +1344,17 @@ func (s *session) onStreamCompleted(id protocol.StreamID) {
 	if err := s.streamsMap.DeleteStream(id); err != nil {
 		s.closeLocal(err)
 	}
+}
+
+func (s *session) SendMessage(p []byte) error {
+	f := &wire.DatagramFrame{DataLenPresent: true}
+	if protocol.ByteCount(len(p)) > f.MaxDataLen(s.peerParams.MaxDatagramFrameSize, s.version) {
+		return errors.New("message too large")
+	}
+	f.Data = make([]byte, len(p))
+	copy(f.Data, p)
+	s.datagramQueue.AddAndWait(f)
+	return nil
 }
 
 func (s *session) LocalAddr() net.Addr {

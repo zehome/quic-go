@@ -238,6 +238,20 @@ func (mr *MockQuicSessionMockRecorder) RemoteAddr() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoteAddr", reflect.TypeOf((*MockQuicSession)(nil).RemoteAddr))
 }
 
+// SendMessage mocks base method
+func (m *MockQuicSession) SendMessage(arg0 []byte) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SendMessage", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SendMessage indicates an expected call of SendMessage
+func (mr *MockQuicSessionMockRecorder) SendMessage(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendMessage", reflect.TypeOf((*MockQuicSession)(nil).SendMessage), arg0)
+}
+
 // closeForRecreating mocks base method
 func (m *MockQuicSession) closeForRecreating() protocol.PacketNumber {
 	m.ctrl.T.Helper()

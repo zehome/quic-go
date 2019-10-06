@@ -356,7 +356,7 @@ var newClientSession = func(
 func (s *session) preSetup() {
 	s.sendQueue = newSendQueue(s.conn)
 	s.retransmissionQueue = newRetransmissionQueue(s.version)
-	s.frameParser = wire.NewFrameParser(s.version)
+	s.frameParser = wire.NewFrameParser(s.config.EnableDatagrams, s.version)
 	s.rttStats = &congestion.RTTStats{}
 	s.receivedPacketHandler = ackhandler.NewReceivedPacketHandler(s.rttStats, s.logger, s.version)
 	s.connFlowController = flowcontrol.NewConnectionFlowController(

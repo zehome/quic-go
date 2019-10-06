@@ -16,7 +16,7 @@ func Fuzz(data []byte) int {
 	if len(data) < 1 {
 		return 0
 	}
-	parser := wire.NewFrameParser(version)
+	parser := wire.NewFrameParser(true, version)
 	parser.SetAckDelayExponent(protocol.DefaultAckDelayExponent)
 
 	var encLevel protocol.EncryptionLevel

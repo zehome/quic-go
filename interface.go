@@ -190,6 +190,9 @@ type Session interface {
 	// SendMessage sends a message as a datagram.
 	// See https://datatracker.ietf.org/doc/draft-pauly-quic-datagram/.
 	SendMessage([]byte) error
+	// ReceiveMessage gets a message received in a datagram.
+	// See https://datatracker.ietf.org/doc/draft-pauly-quic-datagram/.
+	ReceiveMessage() ([]byte, error)
 }
 
 // An EarlySession is a session that is handshaking.

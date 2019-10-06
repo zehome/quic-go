@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lucas-clemente/quic-go/internal/ackhandler"
+	"github.com/lucas-clemente/quic-go/internal/utils"
 
 	"github.com/golang/mock/gomock"
 	"github.com/lucas-clemente/quic-go/internal/handshake"
@@ -75,7 +76,7 @@ var _ = Describe("Packet packer", func() {
 		ackFramer = NewMockAckFrameSource(mockCtrl)
 		sealingManager = NewMockSealingManager(mockCtrl)
 		pnManager = mockackhandler.NewMockSentPacketHandler(mockCtrl)
-		datagramQueue = newDatagramQueue(func() {})
+		datagramQueue = newDatagramQueue(func() {}, utils.DefaultLogger)
 
 		packer = newPacketPacker(
 			protocol.ConnectionID{1, 2, 3, 4, 5, 6, 7, 8},

@@ -373,7 +373,7 @@ func (s *session) preSetup() {
 		}
 	}
 	if s.config.EnableDatagrams {
-		s.datagramQueue = newDatagramQueue(s.scheduleSending)
+		s.datagramQueue = newDatagramQueue(s.scheduleSending, s.logger)
 	}
 }
 
@@ -806,7 +806,7 @@ func (s *session) handleFrame(f wire.Frame, pn protocol.PacketNumber, encLevel p
 		// since we don't send new connection IDs, we don't expect retirements
 		err = errors.New("unexpected RETIRE_CONNECTION_ID frame")
 	case *wire.DatagramFrame:
-		// TODO: handle DATRAGRAM frames
+		err = s.handleDatagramFrame(frame)
 	default:
 		err = fmt.Errorf("unexpected frame type: %s", reflect.ValueOf(&frame).Elem().Type().Name())
 	}
@@ -929,6 +929,14 @@ func (s *session) handleAckFrame(frame *wire.AckFrame, pn protocol.PacketNumber,
 	return nil
 }
 
+func (s *session) handleDatagramFrame(f *wire.DatagramFrame) error {
+	if f.Length(s.version) > protocol.MaxDatagramFrameSize {
+		return qerr.Error(qerr.ProtocolViolation, "DATAGRAM frame too large")
+	}
+	s.datagramQueue.HandleDatagramFrame(f)
+	return nil
+}
+
 // closeLocal closes the session and send a CONNECTION_CLOSE containing the error
 func (s *session) closeLocal(e error) {
 	s.closeOnce.Do(func() {
@@ -1005,7 +1013,9 @@ func (s *session) handleCloseError(closeErr closeError) {
 	}
 
 	s.streamsMap.CloseWithError(quicErr)
-	s.datagramQueue.CloseWithError(quicErr)
+	if s.datagramQueue != nil {
+		s.datagramQueue.CloseWithError(quicErr)
+	}
 
 	if closeErr.immediate {
 		return
@@ -1355,6 +1365,10 @@ func (s *session) SendMessage(p []byte) error {
 	copy(f.Data, p)
 	s.datagramQueue.AddAndWait(f)
 	return nil
+}
+
+func (s *session) ReceiveMessage() ([]byte, error) {
+	return s.datagramQueue.Receive()
 }
 
 func (s *session) LocalAddr() net.Addr {

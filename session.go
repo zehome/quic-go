@@ -169,6 +169,8 @@ type session struct {
 
 	traceCallback func(quictrace.Event)
 
+	datagramQueue *datagramQueue
+
 	logger utils.Logger
 }
 
@@ -247,6 +249,7 @@ var newSession = func(
 		cs,
 		s.framer,
 		s.receivedPacketHandler,
+		s.datagramQueue,
 		s.perspective,
 		s.version,
 	)
@@ -332,6 +335,7 @@ var newClientSession = func(
 		cs,
 		s.framer,
 		s.receivedPacketHandler,
+		s.datagramQueue,
 		s.perspective,
 		s.version,
 	)
@@ -996,6 +1000,7 @@ func (s *session) handleCloseError(closeErr closeError) {
 	}
 
 	s.streamsMap.CloseWithError(quicErr)
+	s.datagramQueue.CloseWithError(quicErr)
 
 	if closeErr.immediate {
 		return

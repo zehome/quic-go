@@ -146,6 +146,7 @@ type packetPacker struct {
 	pnManager           packetNumberManager
 	framer              frameSource
 	acks                ackFrameSource
+	datagramQueue       *datagramQueue
 	retransmissionQueue *retransmissionQueue
 
 	maxPacketSize          protocol.ByteCount
@@ -165,6 +166,7 @@ func newPacketPacker(
 	cryptoSetup sealingManager,
 	framer frameSource,
 	acks ackFrameSource,
+	datagramQueue *datagramQueue,
 	perspective protocol.Perspective,
 	version protocol.VersionNumber,
 ) *packetPacker {
@@ -175,6 +177,7 @@ func newPacketPacker(
 		initialStream:       initialStream,
 		handshakeStream:     handshakeStream,
 		retransmissionQueue: retransmissionQueue,
+		datagramQueue:       datagramQueue,
 		perspective:         perspective,
 		version:             version,
 		framer:              framer,
@@ -372,9 +375,23 @@ func (p *packetPacker) maybePackCryptoPacket() (*packedPacket, error) {
 func (p *packetPacker) composeNextPacket(maxFrameSize protocol.ByteCount) payload {
 	var payload payload
 
-	if ack := p.acks.GetAckFrame(protocol.Encryption1RTT); ack != nil {
-		payload.ack = ack
-		payload.length += ack.Length(p.version)
+	var hasDatagram bool
+	if p.datagramQueue != nil {
+		if datagram := p.datagramQueue.Get(); datagram != nil {
+			payload.frames = append(payload.frames, ackhandler.Frame{
+				Frame:  datagram,
+				OnLost: func(wire.Frame) {},
+			})
+			payload.length += datagram.Length(p.version)
+			hasDatagram = true
+		}
+	}
+	// TODO: make sure ACKs are sent when a lot of DATAGRAMs are queued
+	if !hasDatagram {
+		if ack := p.acks.GetAckFrame(protocol.Encryption1RTT); ack != nil {
+			payload.ack = ack
+			payload.length += ack.Length(p.version)
+		}
 	}
 
 	for {

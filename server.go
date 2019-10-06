@@ -278,6 +278,7 @@ func populateServerConfig(config *Config) *Config {
 		ConnectionIDLength:                    connIDLen,
 		StatelessResetKey:                     config.StatelessResetKey,
 		QuicTracer:                            config.QuicTracer,
+		EnableDatagrams:                       config.EnableDatagrams,
 	}
 }
 

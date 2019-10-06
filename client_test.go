@@ -454,6 +454,7 @@ var _ = Describe("Client", func() {
 					StatelessResetKey:     []byte("foobar"),
 					QuicTracer:            tracer,
 					TokenStore:            tokenStore,
+					EnableDatagrams:       true,
 				}
 				c := populateClientConfig(config, false)
 				Expect(c.HandshakeTimeout).To(Equal(1337 * time.Minute))
@@ -464,6 +465,7 @@ var _ = Describe("Client", func() {
 				Expect(c.StatelessResetKey).To(Equal([]byte("foobar")))
 				Expect(c.QuicTracer).To(Equal(tracer))
 				Expect(c.TokenStore).To(Equal(tokenStore))
+				Expect(c.EnableDatagrams).To(BeTrue())
 			})
 
 			It("errors when the Config contains an invalid version", func() {

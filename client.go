@@ -254,6 +254,7 @@ func populateClientConfig(config *Config, createdPacketConn bool) *Config {
 		StatelessResetKey:                     config.StatelessResetKey,
 		QuicTracer:                            config.QuicTracer,
 		TokenStore:                            config.TokenStore,
+		EnableDatagrams:                       config.EnableDatagrams,
 	}
 }
 

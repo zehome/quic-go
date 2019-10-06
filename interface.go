@@ -256,6 +256,9 @@ type Config struct {
 	// KeepAlive defines whether this peer will periodically send a packet to keep the connection alive.
 	KeepAlive bool
 
+	// Enable sending and receiving of DATAGRAM frames.
+	// See https://datatracker.ietf.org/doc/draft-pauly-quic-datagram/.
+	// Warning: Experimental. This API should not be considered stable and will change soon.
 	EnableDatagrams bool
 	// QUIC Event Tracer.
 	// Warning: Experimental. This API should not be considered stable and will change soon.

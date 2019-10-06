@@ -3,7 +3,10 @@ package self_test
 import (
 	"crypto/tls"
 	"math/rand"
+	"os"
+	"strconv"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -25,6 +28,15 @@ func getTLSClientConfig() *tls.Config {
 		RootCAs:    testdata.GetRootCA(),
 		NextProtos: []string{alpn},
 	}
+}
+
+func scaleDuration(d time.Duration) time.Duration {
+	scaleFactor := 1
+	if f, err := strconv.Atoi(os.Getenv("TIMESCALE_FACTOR")); err == nil { // parsing "" errors, so this works fine if the env is not set
+		scaleFactor = f
+	}
+	Expect(scaleFactor).ToNot(BeZero())
+	return time.Duration(scaleFactor) * d
 }
 
 func TestSelf(t *testing.T) {

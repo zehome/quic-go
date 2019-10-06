@@ -4,6 +4,7 @@
 
 - Add an `EarlyListener` that allows sending of 0.5-RTT data.
 - Add a `TokenStore` to store address validation tokens.
+- Return a `quic.ConnectionState` from `quic.Session.ConnectionState()`.
 
 ## v0.12.0 (2019-08-05)
 

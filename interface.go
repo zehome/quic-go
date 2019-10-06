@@ -185,7 +185,7 @@ type Session interface {
 	Context() context.Context
 	// ConnectionState returns basic details about the QUIC connection.
 	// Warning: This API should not be considered stable and might change soon.
-	ConnectionState() tls.ConnectionState
+	ConnectionState() ConnectionState
 }
 
 // An EarlySession is a session that is handshaking.
@@ -255,9 +255,16 @@ type Config struct {
 	StatelessResetKey []byte
 	// KeepAlive defines whether this peer will periodically send a packet to keep the connection alive.
 	KeepAlive bool
+
+	EnableDatagrams bool
 	// QUIC Event Tracer.
 	// Warning: Experimental. This API should not be considered stable and will change soon.
 	QuicTracer quictrace.Tracer
+}
+
+// ConnectionState records basic details about a QUIC connection
+type ConnectionState struct {
+	TLS tls.ConnectionState
 }
 
 // A Listener for incoming QUIC connections

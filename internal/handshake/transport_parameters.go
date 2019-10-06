@@ -34,6 +34,8 @@ const (
 	ackDelayExponentParameterID               transportParameterID = 0xa
 	maxAckDelayParameterID                    transportParameterID = 0xb
 	disableMigrationParameterID               transportParameterID = 0xc
+	// https://datatracker.ietf.org/doc/draft-pauly-quic-datagram/
+	maxDatagramFrameSizeParameterID transportParameterID = 0x20
 )
 
 // TransportParameters are parameters sent to the peer during the handshake
@@ -57,6 +59,8 @@ type TransportParameters struct {
 
 	StatelessResetToken  *[16]byte
 	OriginalConnectionID protocol.ConnectionID
+
+	MaxDatagramFrameSize protocol.ByteCount
 }
 
 // Unmarshal the transport parameters
@@ -72,8 +76,9 @@ func (p *TransportParameters) Unmarshal(data []byte, sentBy protocol.Perspective
 	// needed to check that every parameter is only sent at most once
 	var parameterIDs []transportParameterID
 
-	var readAckDelayExponent bool
-	var readMaxAckDelay bool
+	p.AckDelayExponent = protocol.DefaultAckDelayExponent
+	p.MaxAckDelay = protocol.DefaultMaxAckDelay
+	p.MaxDatagramFrameSize = protocol.InvalidByteCount
 
 	r := bytes.NewReader(data[2:])
 	for r.Len() >= 4 {
@@ -83,12 +88,10 @@ func (p *TransportParameters) Unmarshal(data []byte, sentBy protocol.Perspective
 		parameterIDs = append(parameterIDs, paramID)
 		switch paramID {
 		case ackDelayExponentParameterID:
-			readAckDelayExponent = true
 			if err := p.readNumericTransportParameter(r, paramID, int(paramLen)); err != nil {
 				return err
 			}
 		case maxAckDelayParameterID:
-			readMaxAckDelay = true
 			if err := p.readNumericTransportParameter(r, paramID, int(paramLen)); err != nil {
 				return err
 			}
@@ -99,7 +102,8 @@ func (p *TransportParameters) Unmarshal(data []byte, sentBy protocol.Perspective
 			initialMaxStreamsBidiParameterID,
 			initialMaxStreamsUniParameterID,
 			idleTimeoutParameterID,
-			maxPacketSizeParameterID:
+			maxPacketSizeParameterID,
+			maxDatagramFrameSizeParameterID:
 			if err := p.readNumericTransportParameter(r, paramID, int(paramLen)); err != nil {
 				return err
 			}
@@ -134,12 +138,6 @@ func (p *TransportParameters) Unmarshal(data []byte, sentBy protocol.Perspective
 		}
 	}
 
-	if !readAckDelayExponent {
-		p.AckDelayExponent = protocol.DefaultAckDelayExponent
-	}
-	if !readMaxAckDelay {
-		p.MaxAckDelay = protocol.DefaultMaxAckDelay
-	}
 	if p.MaxPacketSize == 0 {
 		p.MaxPacketSize = protocol.MaxByteCount
 	}
@@ -205,6 +203,8 @@ func (p *TransportParameters) readNumericTransportParameter(
 			maxAckDelay = utils.InfDuration
 		}
 		p.MaxAckDelay = maxAckDelay
+	case maxDatagramFrameSizeParameterID:
+		p.MaxDatagramFrameSize = protocol.ByteCount(val)
 	default:
 		return fmt.Errorf("TransportParameter BUG: transport parameter %d not found", paramID)
 	}
@@ -266,6 +266,9 @@ func (p *TransportParameters) Marshal() []byte {
 		utils.BigEndian.WriteUint16(b, uint16(p.OriginalConnectionID.Len()))
 		b.Write(p.OriginalConnectionID.Bytes())
 	}
+	if p.MaxDatagramFrameSize != protocol.InvalidByteCount {
+		p.marshalVarintParam(b, maxDatagramFrameSizeParameterID, uint64(p.MaxDatagramFrameSize))
+	}
 
 	data := b.Bytes()
 	binary.BigEndian.PutUint16(data[:2], uint16(b.Len()-2))
@@ -285,6 +288,10 @@ func (p *TransportParameters) String() string {
 	if p.StatelessResetToken != nil { // the client never sends a stateless reset token
 		logString += ", StatelessResetToken: %#x"
 		logParams = append(logParams, *p.StatelessResetToken)
+	}
+	if p.MaxDatagramFrameSize != protocol.InvalidByteCount {
+		logString += ", MaxDatagramFrameSize: %d"
+		logParams = append(logParams, p.MaxDatagramFrameSize)
 	}
 	logString += "}"
 	return fmt.Sprintf(logString, logParams...)

@@ -33,11 +33,12 @@ var _ = Describe("Transport Parameters", func() {
 			AckDelayExponent:               14,
 			MaxAckDelay:                    37 * time.Millisecond,
 			StatelessResetToken:            &[16]byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00},
+			MaxDatagramFrameSize:           876,
 		}
-		Expect(p.String()).To(Equal("&handshake.TransportParameters{OriginalConnectionID: 0xdeadbeef, InitialMaxStreamDataBidiLocal: 0x1234, InitialMaxStreamDataBidiRemote: 0x2345, InitialMaxStreamDataUni: 0x3456, InitialMaxData: 0x4567, MaxBidiStreamNum: 1337, MaxUniStreamNum: 7331, IdleTimeout: 42s, AckDelayExponent: 14, MaxAckDelay: 37ms, StatelessResetToken: 0x112233445566778899aabbccddeeff00}"))
+		Expect(p.String()).To(Equal("&handshake.TransportParameters{OriginalConnectionID: 0xdeadbeef, InitialMaxStreamDataBidiLocal: 0x1234, InitialMaxStreamDataBidiRemote: 0x2345, InitialMaxStreamDataUni: 0x3456, InitialMaxData: 0x4567, MaxBidiStreamNum: 1337, MaxUniStreamNum: 7331, IdleTimeout: 42s, AckDelayExponent: 14, MaxAckDelay: 37ms, StatelessResetToken: 0x112233445566778899aabbccddeeff00, MaxDatagramFrameSize: 876}"))
 	})
 
-	It("has a string representation, if there's no stateless reset token", func() {
+	It("has a string representation, if there's no stateless reset token and no datagram support", func() {
 		p := &TransportParameters{
 			InitialMaxStreamDataBidiLocal:  0x1234,
 			InitialMaxStreamDataBidiRemote: 0x2345,
@@ -49,6 +50,7 @@ var _ = Describe("Transport Parameters", func() {
 			OriginalConnectionID:           protocol.ConnectionID{0xde, 0xad, 0xbe, 0xef},
 			AckDelayExponent:               14,
 			MaxAckDelay:                    37 * time.Second,
+			MaxDatagramFrameSize:           protocol.InvalidByteCount,
 		}
 		Expect(p.String()).To(Equal("&handshake.TransportParameters{OriginalConnectionID: 0xdeadbeef, InitialMaxStreamDataBidiLocal: 0x1234, InitialMaxStreamDataBidiRemote: 0x2345, InitialMaxStreamDataUni: 0x3456, InitialMaxData: 0x4567, MaxBidiStreamNum: 1337, MaxUniStreamNum: 7331, IdleTimeout: 42s, AckDelayExponent: 14, MaxAckDelay: 37s}"))
 	})
@@ -75,6 +77,7 @@ var _ = Describe("Transport Parameters", func() {
 			OriginalConnectionID:           protocol.ConnectionID{0xde, 0xad, 0xbe, 0xef},
 			AckDelayExponent:               13,
 			MaxAckDelay:                    42 * time.Millisecond,
+			MaxDatagramFrameSize:           protocol.ByteCount(getRandomValue()),
 		}
 		data := params.Marshal()
 
@@ -92,6 +95,7 @@ var _ = Describe("Transport Parameters", func() {
 		Expect(p.OriginalConnectionID).To(Equal(protocol.ConnectionID{0xde, 0xad, 0xbe, 0xef}))
 		Expect(p.AckDelayExponent).To(Equal(uint8(13)))
 		Expect(p.MaxAckDelay).To(Equal(42 * time.Millisecond))
+		Expect(p.MaxDatagramFrameSize).To(Equal(params.MaxDatagramFrameSize))
 	})
 
 	It("errors if the transport parameters are too short to contain the length", func() {

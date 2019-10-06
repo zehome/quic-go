@@ -461,6 +461,7 @@ func (s *baseServer) createNewSession(
 		DisableMigration:               true,
 		StatelessResetToken:            &token,
 		OriginalConnectionID:           origDestConnID,
+		MaxDatagramFrameSize:           protocol.InvalidByteCount, // disable DATAGRAMs
 	}
 	sess, err := s.newSession(
 		&conn{pconn: s.conn, currentAddr: remoteAddr},

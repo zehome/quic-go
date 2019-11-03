@@ -828,5 +828,20 @@ var _ = Describe("SentPacketHandler", func() {
 			Expect(handler.GetLossDetectionTimeout()).To(BeZero())
 			Expect(handler.SendMode()).To(Equal(SendAny))
 		})
+
+		It("uses the time of the first initial as an RTT estimate", func() {
+			handler.SentPacket(ackElicitingPacket(&Packet{
+				PacketNumber:    42,
+				EncryptionLevel: protocol.EncryptionInitial,
+				SendTime:        time.Now().Add(-500 * time.Millisecond),
+			}))
+			handler.SentPacket(ackElicitingPacket(&Packet{
+				PacketNumber:    43,
+				EncryptionLevel: protocol.EncryptionInitial,
+				SendTime:        time.Now().Add(-10 * time.Millisecond),
+			}))
+			Expect(handler.ResetForRetry()).To(Succeed())
+			Expect(handler.rttStats.SmoothedRTT()).To(BeNumerically("~", 500*time.Millisecond, 100*time.Millisecond))
+		})
 	})
 })

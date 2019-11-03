@@ -561,10 +561,16 @@ func (h *sentPacketHandler) queueFramesForRetransmission(p *Packet) {
 
 func (h *sentPacketHandler) ResetForRetry() error {
 	h.bytesInFlight = 0
+	var firstPacketSendTime time.Time
 	h.initialPackets.history.Iterate(func(p *Packet) (bool, error) {
+		if firstPacketSendTime.IsZero() {
+			firstPacketSendTime = p.SendTime
+		}
 		h.queueFramesForRetransmission(p)
 		return true, nil
 	})
+	now := time.Now()
+	h.rttStats.UpdateRTT(now.Sub(firstPacketSendTime), 0, now)
 	h.initialPackets = newPacketNumberSpace(h.initialPackets.pns.Pop())
 	h.setLossDetectionTimer()
 	return nil

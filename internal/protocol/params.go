@@ -3,10 +3,10 @@ package protocol
 import "time"
 
 // MaxPacketSizeIPv4 is the maximum packet size that we use for sending IPv4 packets.
-const MaxPacketSizeIPv4 = 1252
+const MaxPacketSizeIPv4 = 1452
 
 // MaxPacketSizeIPv6 is the maximum packet size that we use for sending IPv6 packets.
-const MaxPacketSizeIPv6 = 1232
+const MaxPacketSizeIPv6 = 1432
 
 const defaultMaxCongestionWindowPackets = 1000
 

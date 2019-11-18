@@ -18,7 +18,7 @@ const (
 	// Specified as an RTT multiplier.
 	timeThreshold = 9.0 / 8
 	// Maximum reordering in packets before packet threshold loss detection considers a packet lost.
-	packetThreshold = 3
+	packetThreshold = 30000
 )
 
 type packetNumberSpace struct {

@@ -355,7 +355,11 @@ func (h *sentPacketHandler) detectLostPackets(
 			return false, nil
 		}
 
-		if packet.SendTime.Before(lostSendTime) || pnSpace.largestAcked >= packet.PacketNumber+packetThreshold {
+		if packet.SendTime.Before(lostSendTime) {
+			fmt.Printf("Packet %d lost. Sent %s ago (threshold %s)\n", packet.PacketNumber, now.Sub(packet.SendTime), lossDelay)
+			lostPackets = append(lostPackets, packet)
+		} else if pnSpace.largestAcked >= packet.PacketNumber+packetThreshold {
+			fmt.Printf("Packet %d lost. Largest Acked: %d (threshold %d)\n", packet.PacketNumber, pnSpace.largestAcked, packetThreshold)
 			lostPackets = append(lostPackets, packet)
 		} else if pnSpace.lossTime.IsZero() {
 			// Note: This conditional is only entered once per call

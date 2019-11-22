@@ -657,7 +657,7 @@ func (s *session) handleSinglePacket(p *receivedPacket, hdr *wire.Header) bool /
 	}()
 
 	if hdr.Type == protocol.PacketTypeRetry {
-		return s.handleRetryPacket(hdr)
+		return s.handleRetryPacket(hdr, p.data)
 	}
 
 	// The server can change the source connection ID with the first Handshake packet.
@@ -704,7 +704,7 @@ func (s *session) handleSinglePacket(p *receivedPacket, hdr *wire.Header) bool /
 	return true
 }
 
-func (s *session) handleRetryPacket(hdr *wire.Header) bool /* was this a valid Retry */ {
+func (s *session) handleRetryPacket(hdr *wire.Header, data []byte) bool /* was this a valid Retry */ {
 	if s.perspective == protocol.PerspectiveServer {
 		s.logger.Debugf("Ignoring Retry.")
 		return false
@@ -715,12 +715,13 @@ func (s *session) handleRetryPacket(hdr *wire.Header) bool /* was this a valid R
 	}
 	(&wire.ExtendedHeader{Header: *hdr}).Log(s.logger)
 	destConnID := s.connIDManager.Get()
-	if !hdr.OrigDestConnectionID.Equal(destConnID) {
-		s.logger.Debugf("Ignoring spoofed Retry. Original Destination Connection ID: %s, expected: %s", hdr.OrigDestConnectionID, destConnID)
-		return false
-	}
 	if hdr.SrcConnectionID.Equal(destConnID) {
 		s.logger.Debugf("Ignoring Retry, since the server didn't change the Source Connection ID.")
+		return false
+	}
+	tag := handshake.GetRetryIntegrityTag(data[:len(data)-16], destConnID)
+	if !bytes.Equal(data[len(data)-16:], tag[:]) {
+		s.logger.Debugf("Ignoring spoofed Retry. Integrity Tag doesn't match.")
 		return false
 	}
 	// If a token is already set, this means that we already received a Retry from the server.

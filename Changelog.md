@@ -1,7 +1,12 @@
 # Changelog
 
-## v0.13.0 (unreleased)
+## v0.14.0 (2019-12-04)
 
+- Supports draft-24.
+
+## v0.13.0 (2019-11-05)
+
+- Supports draft-23.
 - Add an `EarlyListener` that allows sending of 0.5-RTT data.
 - Add a `TokenStore` to store address validation tokens.
 

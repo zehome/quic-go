@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -318,7 +317,7 @@ func (c *client) handlePacket(rcvRawPacket *receivedRawPacket) {
 		}
 		pr, err := wire.ParsePublicReset(r)
 		if err != nil {
-			utils.Infof("Received a Public Reset for connection %x. An error occurred parsing the packet.")
+			utils.Infof("Received a Public Reset for connection %x. An error occurred parsing the packet.", hdr.ConnectionID)
 			return
 		}
 		utils.Infof("Received Public Reset, rejected packet number: %#x.", pr.RejectedPacketNumber)

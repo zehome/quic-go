@@ -51,6 +51,10 @@ type Stream interface {
 	// with the connection. It is equivalent to calling both
 	// SetReadDeadline and SetWriteDeadline.
 	SetDeadline(t time.Time) error
+	// GetBytesSent returns the number of bytes of the stream that were sent to the peer
+	GetBytesSent() (protocol.ByteCount, error)
+	// GetBytesRetrans returns the number of bytes of the stream that were retransmitted to the peer
+	GetBytesRetrans() (protocol.ByteCount, error)
 }
 
 // A Session is a QUIC connection between two peers.
@@ -115,6 +119,10 @@ type Config struct {
 	MaxReceiveConnectionFlowControlWindow uint64
 	// KeepAlive defines whether this peer will periodically send PING frames to keep the connection alive.
 	KeepAlive bool
+	// Should we cache handshake parameters? If no cache available, should we create one?
+	CacheHandshake bool
+	// Should the host try to create new paths, if possible?
+	CreatePaths bool
 }
 
 // A Listener for incoming QUIC connections

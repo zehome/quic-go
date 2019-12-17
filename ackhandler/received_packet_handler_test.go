@@ -291,5 +291,33 @@ var _ = Describe("receivedPacketHandler", func() {
 				Expect(handler.GetAckFrame()).ToNot(BeNil())
 			})
 		})
+
+		Context("ClosePath generation", func() {
+			It("generates a simple ClosePath frame", func() {
+				err := handler.ReceivedPacket(1, true)
+				Expect(err).ToNot(HaveOccurred())
+				err = handler.ReceivedPacket(2, true)
+				Expect(err).ToNot(HaveOccurred())
+				frame := handler.GetClosePathFrame()
+				Expect(frame).ToNot(BeNil())
+				Expect(frame.LargestAcked).To(Equal(protocol.PacketNumber(2)))
+				Expect(frame.LowestAcked).To(Equal(protocol.PacketNumber(1)))
+				Expect(frame.AckRanges).To(BeEmpty())
+			})
+
+			It("generates an ClosePath frame with missing packets", func() {
+				err := handler.ReceivedPacket(1, true)
+				Expect(err).ToNot(HaveOccurred())
+				err = handler.ReceivedPacket(4, true)
+				Expect(err).ToNot(HaveOccurred())
+				frame := handler.GetClosePathFrame()
+				Expect(frame).ToNot(BeNil())
+				Expect(frame.LargestAcked).To(Equal(protocol.PacketNumber(4)))
+				Expect(frame.LowestAcked).To(Equal(protocol.PacketNumber(1)))
+				Expect(frame.AckRanges).To(HaveLen(2))
+				Expect(frame.AckRanges[0]).To(Equal(wire.AckRange{First: 4, Last: 4}))
+				Expect(frame.AckRanges[1]).To(Equal(wire.AckRange{First: 1, Last: 1}))
+			})
+		})
 	})
 })

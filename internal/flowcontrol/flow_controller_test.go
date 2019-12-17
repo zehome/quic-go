@@ -34,33 +34,33 @@ var _ = Describe("Flow controller", func() {
 		})
 
 		It("reads the stream send and receive windows when acting as stream-level flow controller", func() {
-			fc := newFlowController(5, true, mockCpm, rttStats)
+			fc := newFlowController(5, true, mockCpm, rttStats, make(map[protocol.PathID]time.Duration))
 			Expect(fc.streamID).To(Equal(protocol.StreamID(5)))
 			Expect(fc.receiveWindow).To(Equal(protocol.ByteCount(2000)))
 			Expect(fc.maxReceiveWindowIncrement).To(Equal(mockCpm.GetMaxReceiveStreamFlowControlWindow()))
 		})
 
 		It("reads the stream send and receive windows when acting as connection-level flow controller", func() {
-			fc := newFlowController(0, false, mockCpm, rttStats)
+			fc := newFlowController(0, false, mockCpm, rttStats, make(map[protocol.PathID]time.Duration))
 			Expect(fc.streamID).To(Equal(protocol.StreamID(0)))
 			Expect(fc.receiveWindow).To(Equal(protocol.ByteCount(4000)))
 			Expect(fc.maxReceiveWindowIncrement).To(Equal(mockCpm.GetMaxReceiveConnectionFlowControlWindow()))
 		})
 
 		It("does not set the stream flow control windows for sending", func() {
-			fc := newFlowController(5, true, mockCpm, rttStats)
+			fc := newFlowController(5, true, mockCpm, rttStats, make(map[protocol.PathID]time.Duration))
 			Expect(fc.sendWindow).To(BeZero())
 		})
 
 		It("does not set the connection flow control windows for sending", func() {
-			fc := newFlowController(0, false, mockCpm, rttStats)
+			fc := newFlowController(0, false, mockCpm, rttStats, make(map[protocol.PathID]time.Duration))
 			Expect(fc.sendWindow).To(BeZero())
 		})
 
 		It("says if it contributes to connection-level flow control", func() {
-			fc := newFlowController(1, false, mockCpm, rttStats)
+			fc := newFlowController(1, false, mockCpm, rttStats, make(map[protocol.PathID]time.Duration))
 			Expect(fc.ContributesToConnection()).To(BeFalse())
-			fc = newFlowController(5, true, mockCpm, rttStats)
+			fc = newFlowController(5, true, mockCpm, rttStats, make(map[protocol.PathID]time.Duration))
 			Expect(fc.ContributesToConnection()).To(BeTrue())
 		})
 	})
@@ -77,6 +77,22 @@ var _ = Describe("Flow controller", func() {
 			controller.bytesSent = 5
 			controller.AddBytesSent(6)
 			Expect(controller.bytesSent).To(Equal(protocol.ByteCount(5 + 6)))
+		})
+
+		It("returns the number of bytes sent", func() {
+			controller.bytesSent = 5
+			Expect(controller.GetBytesSent()).To(Equal(protocol.ByteCount(5)))
+		})
+
+		It("adds bytes retransmitted", func() {
+			controller.bytesRetrans = 5
+			controller.AddBytesRetrans(6)
+			Expect(controller.bytesRetrans).To(Equal(protocol.ByteCount(5 + 6)))
+		})
+
+		It("returns the number of bytes retransmitted", func() {
+			controller.bytesRetrans = 5
+			Expect(controller.GetBytesRetrans()).To(Equal(protocol.ByteCount(5)))
 		})
 
 		It("gets the size of the remaining flow control window", func() {

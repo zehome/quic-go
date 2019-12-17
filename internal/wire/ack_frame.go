@@ -23,6 +23,7 @@ var (
 
 // An AckFrame is an ACK frame in QUIC
 type AckFrame struct {
+	PathID       protocol.PathID
 	LargestAcked protocol.PacketNumber
 	LowestAcked  protocol.PacketNumber
 	AckRanges    []AckRange // has to be ordered. The highest ACK range goes first, the lowest ACK range goes last
@@ -55,6 +56,15 @@ func ParseAckFrame(r *bytes.Reader, version protocol.VersionNumber) (*AckFrame, 
 	missingSequenceNumberDeltaLen := 2 * (typeByte & 0x03)
 	if missingSequenceNumberDeltaLen == 0 {
 		missingSequenceNumberDeltaLen = 1
+	}
+
+	// U bit used to indicate that the ACK contains PathID
+	if typeByte & 0x10 == 0x10 {
+		pathID, err := r.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		frame.PathID = protocol.PathID(pathID)
 	}
 
 	largestAcked, err := utils.GetByteOrder(version).ReadUintN(r, largestAckedLen)
@@ -208,7 +218,15 @@ func (f *AckFrame) Write(b *bytes.Buffer, version protocol.VersionNumber) error 
 		typeByte |= 0x20
 	}
 
+	if f.PathID != protocol.InitialPathID {
+		typeByte |= 0x10
+	}
+
 	b.WriteByte(typeByte)
+
+	if f.PathID != protocol.InitialPathID {
+		b.WriteByte(uint8(f.PathID))
+	}
 
 	switch largestAckedLen {
 	case protocol.PacketNumberLen1:
@@ -342,6 +360,10 @@ func (f *AckFrame) MinLength(version protocol.VersionNumber) (protocol.ByteCount
 	}
 
 	length += (1 + 2) * 0 /* TODO: num_timestamps */
+
+	if f.PathID != protocol.InitialPathID {
+		length += 1
+	}
 
 	return length, nil
 }

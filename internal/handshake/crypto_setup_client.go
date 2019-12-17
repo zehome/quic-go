@@ -1,6 +1,7 @@
 package handshake
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"crypto/tls"
@@ -8,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"os"
 	"sync"
 	"time"
 
@@ -36,6 +39,10 @@ type cryptoSetupClient struct {
 	chloForSignature []byte
 	lastSentCHLO     []byte
 	certManager      crypto.CertManager
+
+	// Easier to cache then
+	certData []byte
+	scfgData []byte
 
 	divNonceChan         chan []byte
 	diversificationNonce []byte
@@ -92,9 +99,133 @@ func NewCryptoSetupClient(
 	}, nil
 }
 
+func writeBinaryFile(filename string, data []byte) {
+	// If previous cache present, let it as it
+	if _, err := os.Stat(filename); err == nil {
+		return
+	}
+
+	f, err := os.Create(filename)
+	if err != nil {
+		utils.Infof("Cannot write cache to %s", filename)
+		return
+	}
+	defer f.Close()
+
+	w := bufio.NewWriter(f)
+
+	// First is SNI
+	binary.Write(w, binary.LittleEndian, data)
+	w.Flush()
+}
+
+func readBinaryFile(filename string) ([]byte, error) {
+	// If no cache, skip this
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		return nil, err
+	}
+
+	f, err := os.Open(filename)
+	if err != nil {
+	utils.Infof("error when opening handshake cache %s: %s", filename, err)
+		return nil, err
+	}
+	defer f.Close()
+
+	data, err := ioutil.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+func (h *cryptoSetupClient) cacheHandshake() {
+	// First is SNI
+	cacheSNIFilename := "cache_sni_" + h.hostname
+	writeBinaryFile(cacheSNIFilename, []byte(h.hostname))
+	// STK
+	cacheSTKFilename := "cache_stk_" + h.hostname
+	writeBinaryFile(cacheSTKFilename, []byte(h.stk))
+	// Collect certData
+	cacheCERTFilename := "cache_cert_" + h.hostname
+	writeBinaryFile(cacheCERTFilename, []byte(h.certData))
+	// Server Config
+	cacheSCFGFilename := "cache_scfg_" + h.hostname
+	writeBinaryFile(cacheSCFGFilename, []byte(h.scfgData))
+}
+
+func (h *cryptoSetupClient) useHandshakeCache() {
+	// First is SNI
+	cacheSNIFilename := "cache_sni_" + h.hostname
+	sni, err := readBinaryFile(cacheSNIFilename)
+	if err != nil {
+		utils.Infof("%s", err)
+		return
+	}
+	hname := string(sni)
+	if h.hostname != hname {
+		utils.Infof("error when comparing SNI: %s != %s", h.hostname, hname)
+		return
+	}
+
+	// STK
+	cacheSTKFilename := "cache_stk_" + h.hostname
+	stk, err := readBinaryFile(cacheSTKFilename)
+	if err != nil {
+		utils.Infof("%s", err)
+		return
+	}
+	h.stk = stk
+
+	// Collect certData
+	cacheCERTFilename := "cache_cert_" + h.hostname
+	certData, err := readBinaryFile(cacheCERTFilename)
+	if err != nil {
+		utils.Infof("%s", err)
+		return
+	}
+	h.certData = certData
+	err = h.certManager.SetData(h.certData)
+	if err != nil {
+		utils.Infof("error when parsing certData: %s", err)
+		return
+	}
+	// Server Config
+	cacheSCFGFilename := "cache_scfg_" + h.hostname
+	scfgData, err := readBinaryFile(cacheSCFGFilename)
+	if err != nil {
+		utils.Infof("%s", err)
+		return
+	}
+
+	h.scfgData = scfgData
+	h.serverConfig, err = parseServerConfig(h.scfgData)
+	if err != nil {
+		utils.Infof("error when parsing server config: %s", err)
+		return
+	}
+
+	// TODO Check if server config is expired
+
+	// Generate client nonce
+	err = h.generateClientNonce()
+	if err != nil {
+		utils.Infof("error when generating client nonce: %s", err)
+		return
+	}
+
+	// If everything went well, the server could be considered as verified
+	h.serverVerified = true
+}
+
 func (h *cryptoSetupClient) HandleCryptoStream() error {
 	messageChan := make(chan HandshakeMessage)
 	errorChan := make(chan error)
+
+	if h.params.CacheHandshake {
+		h.useHandshakeCache()
+	}
 
 	go func() {
 		for {
@@ -144,6 +275,10 @@ func (h *cryptoSetupClient) HandleCryptoStream() error {
 			err = h.handleREJMessage(message.Data)
 		case TagSHLO:
 			err = h.handleSHLOMessage(message.Data)
+			if h.params.CacheHandshake && err == nil {
+				// It worked, cache the data
+				h.cacheHandshake()
+			}
 		default:
 			return qerr.InvalidCryptoMessageType
 		}
@@ -175,6 +310,8 @@ func (h *cryptoSetupClient) handleREJMessage(cryptoData map[Tag][]byte) error {
 			return qerr.CryptoServerConfigExpired
 		}
 
+		h.scfgData = scfg
+
 		// now that we have a server config, we can use its OBIT value to generate a client nonce
 		if len(h.nonc) == 0 {
 			err = h.generateClientNonce()
@@ -194,8 +331,9 @@ func (h *cryptoSetupClient) handleREJMessage(cryptoData map[Tag][]byte) error {
 		if err != nil {
 			return qerr.Error(qerr.InvalidCryptoMessageParameter, "Certificate data invalid")
 		}
+		h.certData = crt
 
-		err = h.certManager.Verify(h.hostname)
+		err = h.certManager.Verify("quic.clemente.io") // h.hostname)
 		if err != nil {
 			utils.Infof("Certificate validation failed: %s", err.Error())
 			return qerr.ProofInvalid

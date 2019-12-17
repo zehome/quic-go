@@ -91,15 +91,15 @@ func (_mr *MockFlowControlManagerMockRecorder) AddBytesRead(arg0, arg1 interface
 }
 
 // GetWindowUpdates mocks base method
-func (_m *MockFlowControlManager) GetWindowUpdates() []flowcontrol.WindowUpdate {
-	ret := _m.ctrl.Call(_m, "GetWindowUpdates")
+func (_m *MockFlowControlManager) GetWindowUpdates(force bool) []flowcontrol.WindowUpdate {
+	ret := _m.ctrl.Call(_m, "GetWindowUpdates", force)
 	ret0, _ := ret[0].([]flowcontrol.WindowUpdate)
 	return ret0
 }
 
 // GetWindowUpdates indicates an expected call of GetWindowUpdates
-func (_mr *MockFlowControlManagerMockRecorder) GetWindowUpdates() *gomock.Call {
-	return _mr.mock.ctrl.RecordCallWithMethodType(_mr.mock, "GetWindowUpdates", reflect.TypeOf((*MockFlowControlManager)(nil).GetWindowUpdates))
+func (_mr *MockFlowControlManagerMockRecorder) GetWindowUpdates(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCallWithMethodType(_mr.mock, "GetWindowUpdates", reflect.TypeOf((*MockFlowControlManager)(nil).GetWindowUpdates), arg0)
 }
 
 // GetReceiveWindow mocks base method
@@ -163,4 +163,42 @@ func (_m *MockFlowControlManager) UpdateWindow(streamID protocol.StreamID, offse
 // UpdateWindow indicates an expected call of UpdateWindow
 func (_mr *MockFlowControlManagerMockRecorder) UpdateWindow(arg0, arg1 interface{}) *gomock.Call {
 	return _mr.mock.ctrl.RecordCallWithMethodType(_mr.mock, "UpdateWindow", reflect.TypeOf((*MockFlowControlManager)(nil).UpdateWindow), arg0, arg1)
+}
+
+// GetBytesSent mocks base method
+func (_m *MockFlowControlManager) GetBytesSent(streamID protocol.StreamID) (protocol.ByteCount, error) {
+	ret := _m.ctrl.Call(_m, "GetBytesSent", streamID)
+	ret0, _ := ret[0].(protocol.ByteCount)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetBytesSent indicates an expected call of GetBytesSent
+func (_mr *MockFlowControlManagerMockRecorder) GetBytesSent(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCallWithMethodType(_mr.mock, "GetBytesSent", reflect.TypeOf((*MockFlowControlManager)(nil).GetBytesSent), arg0)
+}
+
+// AddBytesRetrans mocks base method
+func (_m *MockFlowControlManager) AddBytesRetrans(streamID protocol.StreamID, n protocol.ByteCount) error {
+	ret := _m.ctrl.Call(_m, "AddBytesRetrans", streamID, n)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AddBytesRetrans indicates an expected call of AddBytesRetrans
+func (_mr *MockFlowControlManagerMockRecorder) AddBytesRetrans(arg0, arg1 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCallWithMethodType(_mr.mock, "AddBytesRetrans", reflect.TypeOf((*MockFlowControlManager)(nil).AddBytesRetrans), arg0, arg1)
+}
+
+// GetBytesRetrans mocks base method
+func (_m *MockFlowControlManager) GetBytesRetrans(streamID protocol.StreamID) (protocol.ByteCount, error) {
+	ret := _m.ctrl.Call(_m, "GetBytesRetrans", streamID)
+	ret0, _ := ret[0].(protocol.ByteCount)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetBytesRetrans indicates an expected call of GetBytesRetrans
+func (_mr *MockFlowControlManagerMockRecorder) GetBytesRetrans(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCallWithMethodType(_mr.mock, "GetBytesRetrans", reflect.TypeOf((*MockFlowControlManager)(nil).GetBytesRetrans), arg0)
 }

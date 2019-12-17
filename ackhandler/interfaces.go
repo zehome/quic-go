@@ -13,6 +13,10 @@ type SentPacketHandler interface {
 	SentPacket(packet *Packet) error
 	ReceivedAck(ackFrame *wire.AckFrame, withPacketNumber protocol.PacketNumber, recvTime time.Time) error
 
+	// Specific to multipath operation
+	ReceivedClosePath(f *wire.ClosePathFrame, withPacketNumber protocol.PacketNumber, recvTime time.Time) error
+        SetInflightAsLost()
+
 	SendingAllowed() bool
 	GetStopWaitingFrame(force bool) *wire.StopWaitingFrame
 	ShouldSendRetransmittablePacket() bool
@@ -21,6 +25,9 @@ type SentPacketHandler interface {
 
 	GetAlarmTimeout() time.Time
 	OnAlarm()
+
+	DuplicatePacket(packet *Packet)
+	GetStatistics() (uint64, uint64, uint64)
 }
 
 // ReceivedPacketHandler handles ACKs needed to send for incoming packets
@@ -30,4 +37,7 @@ type ReceivedPacketHandler interface {
 
 	GetAlarmTimeout() time.Time
 	GetAckFrame() *wire.AckFrame
+
+	GetClosePathFrame() *wire.ClosePathFrame
+	GetStatistics() uint64
 }

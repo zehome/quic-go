@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/lucas-clemente/quic-go/congestion"
 	"github.com/lucas-clemente/quic-go/internal/handshake"
@@ -15,6 +16,7 @@ import (
 type flowControlManager struct {
 	connectionParameters handshake.ConnectionParametersManager
 	rttStats             *congestion.RTTStats
+	remoteRTTs           map[protocol.PathID]time.Duration
 
 	streamFlowController map[protocol.StreamID]*flowController
 	connFlowController   *flowController
@@ -26,12 +28,13 @@ var _ FlowControlManager = &flowControlManager{}
 var errMapAccess = errors.New("Error accessing the flowController map.")
 
 // NewFlowControlManager creates a new flow control manager
-func NewFlowControlManager(connectionParameters handshake.ConnectionParametersManager, rttStats *congestion.RTTStats) FlowControlManager {
+func NewFlowControlManager(connectionParameters handshake.ConnectionParametersManager, rttStats *congestion.RTTStats, remoteRTTs map[protocol.PathID]time.Duration) FlowControlManager {
 	return &flowControlManager{
 		connectionParameters: connectionParameters,
 		rttStats:             rttStats,
+		remoteRTTs:           remoteRTTs,
 		streamFlowController: make(map[protocol.StreamID]*flowController),
-		connFlowController:   newFlowController(0, false, connectionParameters, rttStats),
+		connFlowController:   newFlowController(0, false, connectionParameters, rttStats, remoteRTTs),
 	}
 }
 
@@ -45,7 +48,7 @@ func (f *flowControlManager) NewStream(streamID protocol.StreamID, contributesTo
 		return
 	}
 
-	f.streamFlowController[streamID] = newFlowController(streamID, contributesToConnection, f.connectionParameters, f.rttStats)
+	f.streamFlowController[streamID] = newFlowController(streamID, contributesToConnection, f.connectionParameters, f.rttStats, f.remoteRTTs)
 }
 
 // RemoveStream removes a closed stream from flow control
@@ -132,13 +135,13 @@ func (f *flowControlManager) AddBytesRead(streamID protocol.StreamID, n protocol
 	return nil
 }
 
-func (f *flowControlManager) GetWindowUpdates() (res []WindowUpdate) {
+func (f *flowControlManager) GetWindowUpdates(force bool) (res []WindowUpdate) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
 	// get WindowUpdates for streams
 	for id, fc := range f.streamFlowController {
-		if necessary, newIncrement, offset := fc.MaybeUpdateWindow(); necessary {
+		if necessary, newIncrement, offset := fc.MaybeUpdateWindow(); force || necessary {
 			res = append(res, WindowUpdate{StreamID: id, Offset: offset})
 			if fc.ContributesToConnection() && newIncrement != 0 {
 				f.connFlowController.EnsureMinimumWindowIncrement(protocol.ByteCount(float64(newIncrement) * protocol.ConnectionFlowControlMultiplier))
@@ -146,7 +149,7 @@ func (f *flowControlManager) GetWindowUpdates() (res []WindowUpdate) {
 		}
 	}
 	// get a WindowUpdate for the connection
-	if necessary, _, offset := f.connFlowController.MaybeUpdateWindow(); necessary {
+	if necessary, _, offset := f.connFlowController.MaybeUpdateWindow(); force || necessary {
 		res = append(res, WindowUpdate{StreamID: 0, Offset: offset})
 	}
 
@@ -185,6 +188,50 @@ func (f *flowControlManager) AddBytesSent(streamID protocol.StreamID, n protocol
 	}
 
 	return nil
+}
+
+// streamID must not be 0 here
+func (f *flowControlManager) GetBytesSent(streamID protocol.StreamID) (protocol.ByteCount, error) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	fc, err := f.getFlowController(streamID)
+	if err != nil {
+		return 0, err
+	}
+
+	return fc.GetBytesSent(), nil
+}
+
+// streamID must not be 0 here
+func (f *flowControlManager) AddBytesRetrans(streamID protocol.StreamID, n protocol.ByteCount) error {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	fc, err := f.getFlowController(streamID)
+	if err != nil {
+		return err
+	}
+
+	fc.AddBytesRetrans(n)
+	if fc.ContributesToConnection() {
+		f.connFlowController.AddBytesRetrans(n)
+	}
+
+	return nil
+}
+
+// streamID must not be 0 here
+func (f *flowControlManager) GetBytesRetrans(streamID protocol.StreamID) (protocol.ByteCount, error) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	fc, err := f.getFlowController(streamID)
+	if err != nil {
+		return 0, err
+	}
+
+	return fc.GetBytesRetrans(), nil
 }
 
 // must not be called with StreamID 0

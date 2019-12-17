@@ -27,6 +27,12 @@ type ConnectionID uint64
 // A StreamID in QUIC
 type StreamID uint32
 
+// A PathID in QUIC
+type PathID uint8
+
+// Initial PathID
+const InitialPathID = 0
+
 // A ByteCount in QUIC
 type ByteCount uint64
 

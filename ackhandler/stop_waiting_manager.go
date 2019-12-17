@@ -16,6 +16,13 @@ type stopWaitingManager struct {
 func (s *stopWaitingManager) GetStopWaitingFrame(force bool) *wire.StopWaitingFrame {
 	if s.nextLeastUnacked <= s.largestLeastUnackedSent {
 		if force {
+			if s.lastStopWaitingFrame == nil && s.largestLeastUnackedSent > 0 {
+				// This case is possible when no previous SWF were sent (lost first packet)
+				swf := &wire.StopWaitingFrame{
+					LeastUnacked: s.nextLeastUnacked,
+				}
+				s.lastStopWaitingFrame = swf
+			}
 			return s.lastStopWaitingFrame
 		}
 		return nil

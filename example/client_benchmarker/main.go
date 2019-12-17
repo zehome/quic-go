@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"flag"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	quic "github.com/lucas-clemente/quic-go"
 
@@ -19,6 +21,7 @@ func main() {
 	verbose := flag.Bool("v", false, "verbose")
 	multipath := flag.Bool("m", false, "multipath")
 	output := flag.String("o", "", "logging output")
+	cache := flag.Bool("c", false, "cache handshake information")
 	flag.Parse()
 	urls := flag.Args()
 
@@ -27,7 +30,6 @@ func main() {
 	} else {
 		utils.SetLogLevel(utils.LogLevelInfo)
 	}
-	utils.SetLogTimeFormat("")
 
 	if *output != "" {
 		logfile, err := os.Create(*output)
@@ -40,10 +42,11 @@ func main() {
 
 	quicConfig := &quic.Config{
 		CreatePaths: *multipath,
+		CacheHandshake: *cache,
 	}
 
 	hclient := &http.Client{
-		Transport: &h2quic.RoundTripper{QuicConfig: quicConfig},
+		Transport: &h2quic.RoundTripper{QuicConfig: quicConfig, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 	}
 
 	var wg sync.WaitGroup
@@ -51,19 +54,19 @@ func main() {
 	for _, addr := range urls {
 		utils.Infof("GET %s", addr)
 		go func(addr string) {
+			start := time.Now()
 			rsp, err := hclient.Get(addr)
 			if err != nil {
 				panic(err)
 			}
-			utils.Infof("Got response for %s: %#v", addr, rsp)
 
 			body := &bytes.Buffer{}
 			_, err = io.Copy(body, rsp.Body)
 			if err != nil {
 				panic(err)
 			}
-			utils.Infof("Request Body:")
-			utils.Infof("%s", body.Bytes())
+			elapsed := time.Since(start)
+			utils.Infof("%s", elapsed)
 			wg.Done()
 		}(addr)
 	}

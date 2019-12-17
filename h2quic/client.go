@@ -53,6 +53,8 @@ var _ http.RoundTripper = &client{}
 var defaultQuicConfig = &quic.Config{
 	RequestConnectionIDTruncation: true,
 	KeepAlive:                     true,
+	CacheHandshake:                false,
+	CreatePaths:                   false,
 }
 
 // newClient creates a new client

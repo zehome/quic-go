@@ -431,3 +431,11 @@ func (s *stream) Context() context.Context {
 func (s *stream) StreamID() protocol.StreamID {
 	return s.streamID
 }
+
+func (s *stream) GetBytesSent() (protocol.ByteCount, error) {
+	return s.flowControlManager.GetBytesSent(s.streamID)
+}
+
+func (s *stream) GetBytesRetrans() (protocol.ByteCount, error) {
+	return s.flowControlManager.GetBytesRetrans(s.streamID)
+}

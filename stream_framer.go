@@ -1,6 +1,9 @@
 package quic
 
 import (
+	"net"
+	"time"
+
 	"github.com/lucas-clemente/quic-go/internal/flowcontrol"
 	"github.com/lucas-clemente/quic-go/internal/protocol"
 	"github.com/lucas-clemente/quic-go/internal/utils"
@@ -12,8 +15,11 @@ type streamFramer struct {
 
 	flowControlManager flowcontrol.FlowControlManager
 
-	retransmissionQueue []*wire.StreamFrame
-	blockedFrameQueue   []*wire.BlockedFrame
+	retransmissionQueue  []*wire.StreamFrame
+	blockedFrameQueue    []*wire.BlockedFrame
+	addAddressFrameQueue []*wire.AddAddressFrame
+	closePathFrameQueue  []*wire.ClosePathFrame
+	pathsFrame           *wire.PathsFrame
 }
 
 func newStreamFramer(streamsMap *streamsMap, flowControlManager flowcontrol.FlowControlManager) *streamFramer {
@@ -38,6 +44,59 @@ func (f *streamFramer) PopBlockedFrame() *wire.BlockedFrame {
 	}
 	frame := f.blockedFrameQueue[0]
 	f.blockedFrameQueue = f.blockedFrameQueue[1:]
+	return frame
+}
+
+func (f *streamFramer) AddAddressForTransmission(ipVersion uint8, addr net.UDPAddr) {
+	f.addAddressFrameQueue = append(f.addAddressFrameQueue, &wire.AddAddressFrame{IPVersion: ipVersion, Addr: addr})
+}
+
+func (f *streamFramer) PopAddAddressFrame() *wire.AddAddressFrame {
+	if len(f.addAddressFrameQueue) == 0 {
+		return nil
+	}
+	frame := f.addAddressFrameQueue[0]
+	f.addAddressFrameQueue = f.addAddressFrameQueue[1:]
+	return frame
+}
+
+func (f *streamFramer) AddPathsFrameForTransmission(s *session) {
+	s.pathsLock.RLock()
+	defer s.pathsLock.RUnlock()
+	paths := make([]protocol.PathID, len(s.paths))
+	remoteRTTs := make([]time.Duration, len(s.paths))
+	i := 0
+	for pathID := range s.paths {
+		paths[i] = pathID
+		if s.paths[pathID].potentiallyFailed.Get() {
+			remoteRTTs[i] = time.Hour
+		} else {
+			remoteRTTs[i] = s.paths[pathID].rttStats.SmoothedRTT()
+		}
+		i++
+	}
+	f.pathsFrame = &wire.PathsFrame{MaxNumPaths: 255, NumPaths: uint8(len(paths)), PathIDs: paths, RemoteRTTs: remoteRTTs}
+}
+
+func (f *streamFramer) PopPathsFrame() *wire.PathsFrame {
+	if f.pathsFrame == nil {
+		return nil
+	}
+	frame := f.pathsFrame
+	f.pathsFrame = nil
+	return frame
+}
+
+func (f *streamFramer) AddClosePathFrameForTransmission(closePathFrame *wire.ClosePathFrame) {
+	f.closePathFrameQueue = append(f.closePathFrameQueue, closePathFrame)
+}
+
+func (f *streamFramer) PopClosePathFrame() *wire.ClosePathFrame {
+	if len(f.closePathFrameQueue) == 0 {
+		return nil
+	}
+	frame := f.closePathFrameQueue[0]
+	f.closePathFrameQueue = f.closePathFrameQueue[1:]
 	return frame
 }
 
@@ -82,13 +141,23 @@ func (f *streamFramer) maybePopFramesForRetransmission(maxLen protocol.ByteCount
 		splitFrame := maybeSplitOffFrame(frame, maxLen-currentLen)
 		if splitFrame != nil { // StreamFrame was split
 			res = append(res, splitFrame)
-			currentLen += splitFrame.DataLen()
+			frameLen := splitFrame.DataLen()
+			currentLen += frameLen
+			// XXX (QDC): to avoid rewriting a lot of tests...
+			if f.flowControlManager != nil {
+				f.flowControlManager.AddBytesRetrans(splitFrame.StreamID, frameLen)
+			}
 			break
 		}
 
 		f.retransmissionQueue = f.retransmissionQueue[1:]
 		res = append(res, frame)
-		currentLen += frame.DataLen()
+		frameLen := frame.DataLen()
+		currentLen += frameLen
+		// XXX (QDC): to avoid rewriting a lot of tests...
+		if f.flowControlManager != nil {
+			f.flowControlManager.AddBytesRetrans(frame.StreamID, frameLen)
+		}
 	}
 	return
 }

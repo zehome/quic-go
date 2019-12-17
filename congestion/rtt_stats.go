@@ -180,3 +180,9 @@ func (r *RTTStats) ExpireSmoothedMetrics() {
 	r.meanDeviation = utils.MaxDuration(r.meanDeviation, utils.AbsDuration(r.smoothedRTT-r.latestRTT))
 	r.smoothedRTT = utils.MaxDuration(r.smoothedRTT, r.latestRTT)
 }
+
+// XXX (QDC): This is subject to improvement
+// Update the smoothed RTT to the given value
+func (r *RTTStats) UpdateSessionRTT(smoothedRTT time.Duration) {
+	r.smoothedRTT = smoothedRTT
+}

@@ -11,7 +11,9 @@ const MaxPacketSize ByteCount = 1350
 const NonForwardSecurePacketSizeReduction = 50
 
 // DefaultMaxCongestionWindow is the default for the max congestion window
-const DefaultMaxCongestionWindow = 1000
+// XXX (QDC): with large bandwidth networks, this can be a limiting factor
+// Seems reasonable, around 3.5MB in flight
+const DefaultMaxCongestionWindow = 2500
 
 // InitialCongestionWindow is the initial congestion window in QUIC packets
 const InitialCongestionWindow = 32
@@ -46,11 +48,11 @@ const DefaultMaxReceiveConnectionFlowControlWindowServer = 1.5 * (1 << 20) // 1.
 
 // DefaultMaxReceiveStreamFlowControlWindowClient is the default maximum stream-level flow control window for receiving data, for the client
 // This is the value that Chromium is using
-const DefaultMaxReceiveStreamFlowControlWindowClient = 6 * (1 << 20) // 6 MB
+const DefaultMaxReceiveStreamFlowControlWindowClient = 16 * (1 << 20) // 16 MB
 
 // DefaultMaxReceiveConnectionFlowControlWindowClient is the default connection-level flow control window for receiving data, for the client
 // This is the value that Google servers are using
-const DefaultMaxReceiveConnectionFlowControlWindowClient = 15 * (1 << 20) // 15 MB
+const DefaultMaxReceiveConnectionFlowControlWindowClient = 24 * (1 << 20) // 24 MB
 
 // ConnectionFlowControlMultiplier determines how much larger the connection flow control windows needs to be relative to any stream's flow control window
 // This is the value that Chromium is using
@@ -101,7 +103,8 @@ const RetransmittablePacketsBeforeAck = 2
 
 // MaxStreamFrameSorterGaps is the maximum number of gaps between received StreamFrames
 // prevents DoS attacks against the streamFrameSorter
-const MaxStreamFrameSorterGaps = 1000
+// XXX (QDC): needs to be compliant with the maximal congestion window
+const MaxStreamFrameSorterGaps = 2500
 
 // CryptoMaxParams is the upper limit for the number of parameters in a crypto message.
 // Value taken from Chrome.

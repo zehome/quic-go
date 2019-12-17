@@ -18,6 +18,7 @@ type PublicReset struct {
 
 // WritePublicReset writes a Public Reset
 func WritePublicReset(connectionID protocol.ConnectionID, rejectedPacketNumber protocol.PacketNumber, nonceProof uint64) []byte {
+	// TODO (QDC): a public reset should also contains the path ID
 	b := &bytes.Buffer{}
 	b.WriteByte(0x0a)
 	utils.LittleEndian.WriteUint64(b, uint64(connectionID))
@@ -34,6 +35,7 @@ func WritePublicReset(connectionID protocol.ConnectionID, rejectedPacketNumber p
 
 // ParsePublicReset parses a Public Reset
 func ParsePublicReset(r *bytes.Reader) (*PublicReset, error) {
+	// TODO (QDC): a public reset should also contains the path ID
 	pr := PublicReset{}
 	msg, err := handshake.ParseHandshakeMessage(r)
 	if err != nil {

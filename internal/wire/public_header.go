@@ -24,9 +24,11 @@ var (
 type PublicHeader struct {
 	Raw                  []byte
 	ConnectionID         protocol.ConnectionID
+	PathID               protocol.PathID
 	VersionFlag          bool
 	ResetFlag            bool
 	TruncateConnectionID bool
+	MultipathFlag        bool
 	PacketNumberLen      protocol.PacketNumberLen
 	PacketNumber         protocol.PacketNumber
 	VersionNumber        protocol.VersionNumber   // VersionNumber sent by the client
@@ -73,6 +75,10 @@ func (h *PublicHeader) Write(b *bytes.Buffer, version protocol.VersionNumber, pe
 		}
 	}
 
+	if h.MultipathFlag {
+		publicFlagByte |= 0x40
+	}
+
 	b.WriteByte(publicFlagByte)
 
 	if !h.TruncateConnectionID {
@@ -86,6 +92,10 @@ func (h *PublicHeader) Write(b *bytes.Buffer, version protocol.VersionNumber, pe
 
 	if len(h.DiversificationNonce) > 0 {
 		b.Write(h.DiversificationNonce)
+	}
+
+	if h.MultipathFlag {
+		b.WriteByte(uint8(h.PathID))
 	}
 
 	// if we're a server, and the VersionFlag is set, we must not include anything else in the packet
@@ -179,6 +189,8 @@ func ParsePublicHeader(b *bytes.Reader, packetSentBy protocol.Perspective, versi
 		}
 	}
 
+	header.MultipathFlag = publicFlagByte&0x40 > 0
+
 	// Connection ID
 	if !header.TruncateConnectionID {
 		var connID uint64
@@ -234,6 +246,17 @@ func ParsePublicHeader(b *bytes.Reader, packetSentBy protocol.Perspective, versi
 		version = header.VersionNumber
 	}
 
+	// Path ID
+	if header.MultipathFlag {
+		pathID, err := b.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		header.PathID = protocol.PathID(pathID)
+	} else {
+		header.PathID = 0
+	}
+
 	// Packet number
 	if header.hasPacketNumber(packetSentBy) {
 		packetNumber, err := utils.GetByteOrder(version).ReadUintN(b, uint8(header.PacketNumberLen))
@@ -276,6 +299,11 @@ func (h *PublicHeader) GetLength(pers protocol.Perspective) (protocol.ByteCount,
 	}
 
 	length += protocol.ByteCount(len(h.DiversificationNonce))
+
+	// If Multipath flag is set, the PathID is present
+	if h.MultipathFlag {
+		length += 1
+	}
 
 	return length, nil
 }

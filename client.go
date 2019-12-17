@@ -19,7 +19,7 @@ import (
 type client struct {
 	mutex sync.Mutex
 
-	conn     connection
+	pconnMgr *pconnManager
 	hostname string
 
 	handshakeChan <-chan handshakeEvent
@@ -33,6 +33,8 @@ type client struct {
 
 	connectionID protocol.ConnectionID
 	version      protocol.VersionNumber
+
+	closeListen chan error
 
 	session packetHandler
 }
@@ -50,11 +52,13 @@ func DialAddr(addr string, tlsConf *tls.Config, config *Config) (Session, error)
 	if err != nil {
 		return nil, err
 	}
-	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	// Create the pconnManager here. It will be used to manage UDP connections
+	pconnMgr := &pconnManager{perspective: protocol.PerspectiveClient}
+	err = pconnMgr.setup(nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	return Dial(udpConn, udpAddr, addr, tlsConf, config)
+	return Dial(pconnMgr.pconnAny, udpAddr, addr, tlsConf, config, pconnMgr)
 }
 
 // DialAddrNonFWSecure establishes a new QUIC connection to a server.
@@ -68,11 +72,13 @@ func DialAddrNonFWSecure(
 	if err != nil {
 		return nil, err
 	}
-	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	// Create the pconnManager here. It will be used to manage UDP connections
+	pconnMgr := &pconnManager{perspective: protocol.PerspectiveClient}
+	err = pconnMgr.setup(nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	return DialNonFWSecure(udpConn, udpAddr, addr, tlsConf, config)
+	return DialNonFWSecure(pconnMgr.pconnAny, udpAddr, addr, tlsConf, config, pconnMgr)
 }
 
 // DialNonFWSecure establishes a new non-forward-secure QUIC connection to a server using a net.PacketConn.
@@ -83,6 +89,7 @@ func DialNonFWSecure(
 	host string,
 	tlsConf *tls.Config,
 	config *Config,
+	pconnMgrArg *pconnManager,
 ) (NonFWSession, error) {
 	connID, err := generateConnectionID()
 	if err != nil {
@@ -101,9 +108,21 @@ func DialNonFWSecure(
 		}
 	}
 
+	var pconnMgr *pconnManager
+
+	if pconnMgrArg == nil {
+		pconnMgr = &pconnManager{perspective: protocol.PerspectiveClient}
+		err := pconnMgr.setup(pconn, nil)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		pconnMgr = pconnMgrArg
+	}
+
 	clientConfig := populateClientConfig(config)
 	c := &client{
-		conn:                   &conn{pconn: pconn, currentAddr: remoteAddr},
+		pconnMgr:               pconnMgr,
 		connectionID:           connID,
 		hostname:               hostname,
 		tlsConf:                tlsConf,
@@ -111,10 +130,12 @@ func DialNonFWSecure(
 		version:                clientConfig.Versions[0],
 		versionNegotiationChan: make(chan struct{}),
 	}
+	// It's the responsibility of the client to give a proper connection
+	conn := &conn{pconn: c.pconnMgr.pconnAny, currentAddr: remoteAddr}
 
-	utils.Infof("Starting new connection to %s (%s -> %s), connectionID %x, version %s", hostname, c.conn.LocalAddr().String(), c.conn.RemoteAddr().String(), c.connectionID, c.version)
+	utils.Infof("Starting new connection to %s (%s -> %s), connectionID %x, version %s", hostname, conn.LocalAddr().String(), conn.RemoteAddr().String(), c.connectionID, c.version)
 
-	if err := c.establishSecureConnection(); err != nil {
+	if err := c.establishSecureConnection(conn); err != nil {
 		return nil, err
 	}
 	return c.session.(NonFWSession), nil
@@ -128,8 +149,9 @@ func Dial(
 	host string,
 	tlsConf *tls.Config,
 	config *Config,
+	pconnMgrArg *pconnManager,
 ) (Session, error) {
-	sess, err := DialNonFWSecure(pconn, remoteAddr, host, tlsConf, config)
+	sess, err := DialNonFWSecure(pconn, remoteAddr, host, tlsConf, config, pconnMgrArg)
 	if err != nil {
 		return nil, err
 	}
@@ -175,13 +197,15 @@ func populateClientConfig(config *Config) *Config {
 		RequestConnectionIDTruncation:         config.RequestConnectionIDTruncation,
 		MaxReceiveStreamFlowControlWindow:     maxReceiveStreamFlowControlWindow,
 		MaxReceiveConnectionFlowControlWindow: maxReceiveConnectionFlowControlWindow,
-		KeepAlive: config.KeepAlive,
+		KeepAlive:      config.KeepAlive,
+		CacheHandshake: config.CacheHandshake,
+		CreatePaths:    config.CreatePaths,
 	}
 }
 
 // establishSecureConnection returns as soon as the connection is secure (as opposed to forward-secure)
-func (c *client) establishSecureConnection() error {
-	if err := c.createNewSession(nil); err != nil {
+func (c *client) establishSecureConnection(conn connection) error {
+	if err := c.createNewSession(nil, conn); err != nil {
 		return err
 	}
 	go c.listen()
@@ -197,7 +221,12 @@ func (c *client) establishSecureConnection() error {
 		}
 		close(errorChan)
 		utils.Infof("Connection %x closed.", c.connectionID)
-		c.conn.Close()
+		c.pconnMgr.closePconns()
+		select {
+		case c.closeListen <- runErr:
+			// It's possible to have the client having closed its run loop before...
+		default:
+		}
 	}()
 
 	// wait until the server accepts the QUIC version (or an error occurs)
@@ -225,28 +254,39 @@ func (c *client) establishSecureConnection() error {
 func (c *client) listen() {
 	var err error
 
+listenLoop:
 	for {
-		var n int
-		var addr net.Addr
-		data := getPacketBuffer()
-		data = data[:protocol.MaxReceivePacketSize]
-		// The packet size should not exceed protocol.MaxReceivePacketSize bytes
-		// If it does, we only read a truncated packet, which will then end up undecryptable
-		n, addr, err = c.conn.Read(data)
-		if err != nil {
-			if !strings.HasSuffix(err.Error(), "use of closed network connection") {
-				c.session.Close(err)
-			}
-			break
+		select {
+		case <-c.closeListen:
+			break listenLoop
+		case err = <-c.pconnMgr.errorConn:
+			c.session.Close(err)
+			break listenLoop
+		case rcvRawPacket := <-c.pconnMgr.rcvRawPackets:
+			c.handlePacket(rcvRawPacket)
 		}
-		data = data[:n]
 
-		c.handlePacket(addr, data)
 	}
 }
 
-func (c *client) handlePacket(remoteAddr net.Addr, packet []byte) {
-	rcvTime := time.Now()
+func (c *client) handlePacket(rcvRawPacket *receivedRawPacket) {
+	var remoteAddr net.Addr
+	var packet []byte
+	var rcvTime time.Time
+	var pconn net.PacketConn
+
+	if rcvRawPacket.remoteAddr != nil {
+		remoteAddr = rcvRawPacket.remoteAddr
+	}
+	if rcvRawPacket.data != nil {
+		packet = rcvRawPacket.data
+	}
+	if !rcvRawPacket.rcvTime.IsZero() {
+		rcvTime = rcvRawPacket.rcvTime
+	}
+	if rcvRawPacket.rcvPconn != nil {
+		pconn = rcvRawPacket.rcvPconn
+	}
 
 	r := bytes.NewReader(packet)
 	hdr, err := wire.ParsePublicHeader(r, protocol.PerspectiveServer, c.version)
@@ -269,7 +309,7 @@ func (c *client) handlePacket(remoteAddr net.Addr, packet []byte) {
 	defer c.mutex.Unlock()
 
 	if hdr.ResetFlag {
-		cr := c.conn.RemoteAddr()
+		cr := c.session.RemoteAddr()
 		// check if the remote address and the connection ID match
 		// otherwise this might be an attacker trying to inject a PUBLIC_RESET to kill the connection
 		if cr.Network() != remoteAddr.Network() || cr.String() != remoteAddr.String() || hdr.ConnectionID != c.connectionID {
@@ -300,7 +340,7 @@ func (c *client) handlePacket(remoteAddr net.Addr, packet []byte) {
 
 	if hdr.VersionFlag {
 		// version negotiation packets have no payload
-		if err := c.handlePacketWithVersionFlag(hdr); err != nil {
+		if err := c.handlePacketWithVersionFlag(hdr, remoteAddr); err != nil {
 			c.session.Close(err)
 		}
 		return
@@ -311,10 +351,11 @@ func (c *client) handlePacket(remoteAddr net.Addr, packet []byte) {
 		publicHeader: hdr,
 		data:         packet[len(packet)-r.Len():],
 		rcvTime:      rcvTime,
+		rcvPconn:     pconn,
 	})
 }
 
-func (c *client) handlePacketWithVersionFlag(hdr *wire.PublicHeader) error {
+func (c *client) handlePacketWithVersionFlag(hdr *wire.PublicHeader, remoteAddr net.Addr) error {
 	for _, v := range hdr.SupportedVersions {
 		if v == c.version {
 			// the version negotiation packet contains the version that we offered
@@ -344,13 +385,17 @@ func (c *client) handlePacketWithVersionFlag(hdr *wire.PublicHeader) error {
 	// the new session must be created first to update client member variables
 	oldSession := c.session
 	defer oldSession.Close(errCloseSessionForNewVersion)
-	return c.createNewSession(hdr.SupportedVersions)
+	// It's the responsibility of the client to give a proper connection
+	conn := &conn{pconn: c.pconnMgr.pconnAny, currentAddr: remoteAddr}
+	return c.createNewSession(hdr.SupportedVersions, conn)
 }
 
-func (c *client) createNewSession(negotiatedVersions []protocol.VersionNumber) error {
+func (c *client) createNewSession(negotiatedVersions []protocol.VersionNumber, conn connection) error {
 	var err error
 	c.session, c.handshakeChan, err = newClientSession(
-		c.conn,
+		conn,
+		c.pconnMgr,
+		c.config.CreatePaths,
 		c.hostname,
 		c.version,
 		c.connectionID,

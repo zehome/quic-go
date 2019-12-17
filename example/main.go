@@ -111,7 +111,7 @@ func getBuildDir() string {
 func main() {
 	// defer profile.Start().Stop()
 	go func() {
-		log.Println(http.ListenAndServe("localhost:6060", nil))
+		log.Println(http.ListenAndServe("0.0.0.0:6060", nil))
 	}()
 	// runtime.SetBlockProfileRate(1)
 
@@ -136,7 +136,7 @@ func main() {
 	http.Handle("/", http.FileServer(http.Dir(*www)))
 
 	if len(bs) == 0 {
-		bs = binds{"localhost:6121"}
+		bs = binds{"0.0.0.0:6121"}
 	}
 
 	var wg sync.WaitGroup

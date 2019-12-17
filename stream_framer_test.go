@@ -52,6 +52,7 @@ var _ = Describe("Stream Framer", func() {
 	})
 
 	It("sets the DataLenPresent for dequeued retransmitted frames", func() {
+		mockFcm.EXPECT().AddBytesRetrans(retransmittedFrame1.StreamID, retransmittedFrame1.DataLen())
 		framer.AddFrameForRetransmission(retransmittedFrame1)
 		fs := framer.PopStreamFrames(protocol.MaxByteCount)
 		Expect(fs).To(HaveLen(1))
@@ -74,6 +75,8 @@ var _ = Describe("Stream Framer", func() {
 		})
 
 		It("pops frames for retransmission", func() {
+			mockFcm.EXPECT().AddBytesRetrans(retransmittedFrame1.StreamID, retransmittedFrame1.DataLen())
+			mockFcm.EXPECT().AddBytesRetrans(retransmittedFrame2.StreamID, retransmittedFrame2.DataLen())
 			framer.AddFrameForRetransmission(retransmittedFrame1)
 			framer.AddFrameForRetransmission(retransmittedFrame2)
 			fs := framer.PopStreamFrames(1000)
@@ -121,6 +124,7 @@ var _ = Describe("Stream Framer", func() {
 			mockFcm.EXPECT().SendWindowSize(id1).Return(protocol.MaxByteCount, nil)
 			mockFcm.EXPECT().AddBytesSent(id1, protocol.ByteCount(6))
 			mockFcm.EXPECT().RemainingConnectionWindowSize().Return(protocol.MaxByteCount)
+			mockFcm.EXPECT().AddBytesRetrans(retransmittedFrame1.StreamID, retransmittedFrame1.DataLen())
 			framer.AddFrameForRetransmission(retransmittedFrame1)
 			stream1.dataForWriting = []byte("foobar")
 			fs := framer.PopStreamFrames(1000)
@@ -198,6 +202,7 @@ var _ = Describe("Stream Framer", func() {
 			})
 
 			It("splits a frame", func() {
+				mockFcm.EXPECT().AddBytesRetrans(retransmittedFrame2.StreamID, protocol.ByteCount(2))
 				framer.AddFrameForRetransmission(retransmittedFrame2)
 				origlen := retransmittedFrame2.DataLen()
 				fs := framer.PopStreamFrames(6)
@@ -217,10 +222,17 @@ var _ = Describe("Stream Framer", func() {
 					Data:     bytes.Repeat([]byte{'f'}, 30*30),
 				}
 				framer.AddFrameForRetransmission(origFrame)
+				dataLenPresentOrig := origFrame.DataLenPresent
+				origFrame.DataLenPresent = true
+				frameHeaderLen, _ := origFrame.MinLength(protocol.VersionWhatever)
+				origFrame.DataLenPresent = dataLenPresentOrig
 
 				minFrameDataLen := protocol.MaxPacketSize
 
 				for i := 0; i < 30; i++ {
+					if i - int(frameHeaderLen) > 0 {
+						mockFcm.EXPECT().AddBytesRetrans(origFrame.StreamID, protocol.ByteCount(i) - frameHeaderLen)
+					}
 					frames, currentLen := framer.maybePopFramesForRetransmission(protocol.ByteCount(i))
 					if len(frames) == 0 {
 						Expect(currentLen).To(BeZero())
@@ -240,9 +252,11 @@ var _ = Describe("Stream Framer", func() {
 
 			It("only removes a frame from the framer after returning all split parts", func() {
 				framer.AddFrameForRetransmission(retransmittedFrame2)
+				mockFcm.EXPECT().AddBytesRetrans(retransmittedFrame2.StreamID, protocol.ByteCount(2))
 				fs := framer.PopStreamFrames(6)
 				Expect(fs).To(HaveLen(1))
 				Expect(framer.retransmissionQueue).ToNot(BeEmpty())
+				mockFcm.EXPECT().AddBytesRetrans(retransmittedFrame2.StreamID, protocol.ByteCount(2))
 				fs = framer.PopStreamFrames(1000)
 				Expect(fs).To(HaveLen(1))
 				Expect(framer.retransmissionQueue).To(BeEmpty())
@@ -322,6 +336,7 @@ var _ = Describe("Stream Framer", func() {
 
 		It("does not count retransmitted frames as sent bytes", func() {
 			framer.AddFrameForRetransmission(retransmittedFrame1)
+			mockFcm.EXPECT().AddBytesRetrans(retransmittedFrame1.StreamID, retransmittedFrame1.DataLen())
 			framer.PopStreamFrames(1000)
 		})
 

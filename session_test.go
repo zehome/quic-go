@@ -87,15 +87,21 @@ func (h *mockSentPacketHandler) ReceivedAck(ackFrame *wire.AckFrame, withPacketN
 	return nil
 }
 
+func (h *mockSentPacketHandler) ReceivedClosePath(f *wire.ClosePathFrame, withPacketNumber protocol.PacketNumber, recvTime time.Time) error {
+	return nil
+}
+
 func (h *mockSentPacketHandler) GetLeastUnacked() protocol.PacketNumber { return 1 }
-func (h *mockSentPacketHandler) GetAlarmTimeout() time.Time             { panic("not implemented") }
+func (h *mockSentPacketHandler) GetAlarmTimeout() time.Time             { return time.Now() }
 func (h *mockSentPacketHandler) OnAlarm()                               { panic("not implemented") }
+func (h *mockSentPacketHandler) DuplicatePacket(_ *ackhandler.Packet)   { panic("not implemented") }
 func (h *mockSentPacketHandler) SendingAllowed() bool                   { return !h.congestionLimited }
 func (h *mockSentPacketHandler) ShouldSendRetransmittablePacket() bool {
 	b := h.shouldSendRetransmittablePacket
 	h.shouldSendRetransmittablePacket = false
 	return b
 }
+func (h *mockSentPacketHandler) GetStatistics() (uint64, uint64, uint64) { panic("not implemented") }
 
 func (h *mockSentPacketHandler) GetStopWaitingFrame(force bool) *wire.StopWaitingFrame {
 	h.requestedStopWaiting = true
@@ -109,6 +115,11 @@ func (h *mockSentPacketHandler) DequeuePacketForRetransmission() *ackhandler.Pac
 		return packet
 	}
 	return nil
+}
+
+func (h *mockSentPacketHandler) SetInflightAsLost() {
+	h.retransmissionQueue = h.sentPackets
+	h.sentPackets = nil
 }
 
 func newMockSentPacketHandler() ackhandler.SentPacketHandler {
@@ -134,6 +145,13 @@ func (m *mockReceivedPacketHandler) SetLowerLimit(protocol.PacketNumber) {
 	panic("not implemented")
 }
 func (m *mockReceivedPacketHandler) GetAlarmTimeout() time.Time { return m.ackAlarm }
+func (m *mockReceivedPacketHandler) GetStatistics() uint64 {
+	panic("not implemented")
+}
+
+func (m *mockReceivedPacketHandler) GetClosePathFrame() *wire.ClosePathFrame {
+	panic("not implemented")
+}
 
 var _ ackhandler.ReceivedPacketHandler = &mockReceivedPacketHandler{}
 
@@ -182,6 +200,8 @@ var _ = Describe("Session", func() {
 		var pSess Session
 		pSess, handshakeChan, err = newSession(
 			mconn,
+			nil,
+			true, // Try doing multipath
 			protocol.Version37,
 			0,
 			scfg,
@@ -234,6 +254,8 @@ var _ = Describe("Session", func() {
 			}
 			pSess, _, err := newSession(
 				mconn,
+				nil,
+				true, // Try doing multipath
 				protocol.Version37,
 				0,
 				scfg,
@@ -547,10 +569,11 @@ var _ = Describe("Session", func() {
 		})
 
 		It("ignores the error when the stream is not known", func() {
+			// XXX (QDC): adapted to multiple paths
 			err := sess.handleFrames([]wire.Frame{&wire.RstStreamFrame{
 				StreamID:  5,
 				ErrorCode: 42,
-			}})
+			}}, sess.paths[0])
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -631,38 +654,44 @@ var _ = Describe("Session", func() {
 			err := sess.streamsMap.RemoveStream(5)
 			Expect(err).ToNot(HaveOccurred())
 			sess.garbageCollectStreams()
+			// XXX (QDC): adapted to multiple paths
 			err = sess.handleFrames([]wire.Frame{&wire.WindowUpdateFrame{
 				StreamID:   5,
 				ByteOffset: 1337,
-			}})
+			}}, sess.paths[0])
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 
 	It("handles PING frames", func() {
-		err := sess.handleFrames([]wire.Frame{&wire.PingFrame{}})
+		// XXX (QDC): adapted to multiple paths
+		err := sess.handleFrames([]wire.Frame{&wire.PingFrame{}}, sess.paths[0])
 		Expect(err).NotTo(HaveOccurred())
 	})
 
 	It("handles BLOCKED frames", func() {
-		err := sess.handleFrames([]wire.Frame{&wire.BlockedFrame{}})
+		// XXX (QDC): adapted to multiple paths
+		err := sess.handleFrames([]wire.Frame{&wire.BlockedFrame{}}, sess.paths[0])
 		Expect(err).NotTo(HaveOccurred())
 	})
 
 	It("errors on GOAWAY frames", func() {
-		err := sess.handleFrames([]wire.Frame{&wire.GoawayFrame{}})
+		// XXX (QDC): adapted to multiple paths
+		err := sess.handleFrames([]wire.Frame{&wire.GoawayFrame{}}, sess.paths[0])
 		Expect(err).To(MatchError("unimplemented: handling GOAWAY frames"))
 	})
 
 	It("handles STOP_WAITING frames", func() {
-		err := sess.handleFrames([]wire.Frame{&wire.StopWaitingFrame{LeastUnacked: 10}})
+		// XXX (QDC): adapted to multiple paths
+		err := sess.handleFrames([]wire.Frame{&wire.StopWaitingFrame{LeastUnacked: 10}}, sess.paths[0])
 		Expect(err).NotTo(HaveOccurred())
 	})
 
 	It("handles CONNECTION_CLOSE frames", func(done Done) {
 		go sess.run()
 		str, _ := sess.GetOrOpenStream(5)
-		err := sess.handleFrames([]wire.Frame{&wire.ConnectionCloseFrame{ErrorCode: 42, ReasonPhrase: "foobar"}})
+		// XXX (QDC): adapted to multiple paths
+		err := sess.handleFrames([]wire.Frame{&wire.ConnectionCloseFrame{ErrorCode: 42, ReasonPhrase: "foobar"}}, sess.paths[0])
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(sess.Context().Done()).Should(BeClosed())
 		_, err = str.Read([]byte{0})
@@ -858,8 +887,9 @@ var _ = Describe("Session", func() {
 			hdr.PacketNumber = 5
 			err := sess.handlePacketImpl(&receivedPacket{publicHeader: hdr})
 			Expect(err).ToNot(HaveOccurred())
-			Expect(sess.lastRcvdPacketNumber).To(Equal(protocol.PacketNumber(5)))
-			Expect(sess.largestRcvdPacketNumber).To(Equal(protocol.PacketNumber(5)))
+			// XXX (QDC): adapted to multiple paths
+			Expect(sess.paths[0].lastRcvdPacketNumber).To(Equal(protocol.PacketNumber(5)))
+			Expect(sess.paths[0].largestRcvdPacketNumber).To(Equal(protocol.PacketNumber(5)))
 		})
 
 		It("closes when handling a packet fails", func(done Done) {
@@ -880,13 +910,15 @@ var _ = Describe("Session", func() {
 			hdr.PacketNumber = 5
 			err := sess.handlePacketImpl(&receivedPacket{publicHeader: hdr})
 			Expect(err).ToNot(HaveOccurred())
-			Expect(sess.lastRcvdPacketNumber).To(Equal(protocol.PacketNumber(5)))
-			Expect(sess.largestRcvdPacketNumber).To(Equal(protocol.PacketNumber(5)))
+			// XXX (QDC): adapted to multiple paths
+			Expect(sess.paths[0].lastRcvdPacketNumber).To(Equal(protocol.PacketNumber(5)))
+			Expect(sess.paths[0].largestRcvdPacketNumber).To(Equal(protocol.PacketNumber(5)))
 			hdr.PacketNumber = 3
 			err = sess.handlePacketImpl(&receivedPacket{publicHeader: hdr})
 			Expect(err).ToNot(HaveOccurred())
-			Expect(sess.lastRcvdPacketNumber).To(Equal(protocol.PacketNumber(3)))
-			Expect(sess.largestRcvdPacketNumber).To(Equal(protocol.PacketNumber(5)))
+			// XXX (QDC): adapted to multiple paths
+			Expect(sess.paths[0].lastRcvdPacketNumber).To(Equal(protocol.PacketNumber(3)))
+			Expect(sess.paths[0].largestRcvdPacketNumber).To(Equal(protocol.PacketNumber(5)))
 		})
 
 		It("handles duplicate packets", func() {
@@ -900,20 +932,23 @@ var _ = Describe("Session", func() {
 		Context("updating the remote address", func() {
 			It("sets the remote address", func() {
 				remoteIP := &net.IPAddr{IP: net.IPv4(192, 168, 0, 100)}
-				Expect(sess.conn.(*mockConnection).remoteAddr).ToNot(Equal(remoteIP))
+				// XXX (QDC): ugly...
+				Expect(sess.paths[0].conn.(*mockConnection).remoteAddr).ToNot(Equal(remoteIP))
 				p := receivedPacket{
 					remoteAddr:   remoteIP,
 					publicHeader: &wire.PublicHeader{PacketNumber: 1337},
 				}
 				err := sess.handlePacketImpl(&p)
 				Expect(err).ToNot(HaveOccurred())
-				Expect(sess.conn.(*mockConnection).remoteAddr).To(Equal(remoteIP))
+				// XXX (QDC): ugly...
+				Expect(sess.paths[0].conn.(*mockConnection).remoteAddr).To(Equal(remoteIP))
 			})
 
 			It("doesn't change the remote address if authenticating the packet fails", func() {
 				remoteIP := &net.IPAddr{IP: net.IPv4(192, 168, 0, 100)}
 				attackerIP := &net.IPAddr{IP: net.IPv4(192, 168, 0, 102)}
-				sess.conn.(*mockConnection).remoteAddr = remoteIP
+				// XXX (QDC): ugly...
+				sess.paths[0].conn.(*mockConnection).remoteAddr = remoteIP
 				// use the real packetUnpacker here, to make sure this test fails if the error code for failed decryption changes
 				sess.unpacker = &packetUnpacker{}
 				sess.unpacker.(*packetUnpacker).aead = &mockAEAD{}
@@ -924,13 +959,15 @@ var _ = Describe("Session", func() {
 				err := sess.handlePacketImpl(&p)
 				quicErr := err.(*qerr.QuicError)
 				Expect(quicErr.ErrorCode).To(Equal(qerr.DecryptionFailure))
-				Expect(sess.conn.(*mockConnection).remoteAddr).To(Equal(remoteIP))
+				// XXX (QDC): ugly...
+				Expect(sess.paths[0].conn.(*mockConnection).remoteAddr).To(Equal(remoteIP))
 			})
 
 			It("sets the remote address, if the packet is authenticated, but unpacking fails for another reason", func() {
 				testErr := errors.New("testErr")
 				remoteIP := &net.IPAddr{IP: net.IPv4(192, 168, 0, 100)}
-				Expect(sess.conn.(*mockConnection).remoteAddr).ToNot(Equal(remoteIP))
+				// XXX (QDC): ugly...
+				Expect(sess.paths[0].conn.(*mockConnection).remoteAddr).ToNot(Equal(remoteIP))
 				p := receivedPacket{
 					remoteAddr:   remoteIP,
 					publicHeader: &wire.PublicHeader{PacketNumber: 1337},
@@ -938,7 +975,8 @@ var _ = Describe("Session", func() {
 				sess.unpacker.(*mockUnpacker).unpackErr = testErr
 				err := sess.handlePacketImpl(&p)
 				Expect(err).To(MatchError(testErr))
-				Expect(sess.conn.(*mockConnection).remoteAddr).To(Equal(remoteIP))
+				// XXX (QDC): ugly...
+				Expect(sess.paths[0].conn.(*mockConnection).remoteAddr).To(Equal(remoteIP))
 			})
 		})
 	})
@@ -946,7 +984,8 @@ var _ = Describe("Session", func() {
 	Context("sending packets", func() {
 		It("sends ack frames", func() {
 			packetNumber := protocol.PacketNumber(0x035E)
-			sess.receivedPacketHandler.ReceivedPacket(packetNumber, true)
+			// XXX (QDC): adapted to multiple paths
+			sess.paths[0].receivedPacketHandler.ReceivedPacket(packetNumber, true)
 			err := sess.sendPacket()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mconn.written).To(HaveLen(1))
@@ -954,10 +993,10 @@ var _ = Describe("Session", func() {
 		})
 
 		It("sends ACK frames when congestion limited", func() {
-			sess.sentPacketHandler = &mockSentPacketHandler{congestionLimited: true}
-			sess.packer.packetNumberGenerator.next = 0x1338
+			sess.paths[0].sentPacketHandler = &mockSentPacketHandler{congestionLimited: true}
+			sess.paths[0].packetNumberGenerator.next = 0x1338
 			packetNumber := protocol.PacketNumber(0x035E)
-			sess.receivedPacketHandler.ReceivedPacket(packetNumber, true)
+			sess.paths[0].receivedPacketHandler.ReceivedPacket(packetNumber, true)
 			err := sess.sendPacket()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mconn.written).To(HaveLen(1))
@@ -965,11 +1004,11 @@ var _ = Describe("Session", func() {
 		})
 
 		It("sends a retransmittable packet when required by the SentPacketHandler", func() {
-			sess.sentPacketHandler = &mockSentPacketHandler{shouldSendRetransmittablePacket: true}
+			sess.paths[0].sentPacketHandler = &mockSentPacketHandler{shouldSendRetransmittablePacket: true}
 			err := sess.sendPacket()
 			Expect(err).ToNot(HaveOccurred())
 			Expect(mconn.written).To(HaveLen(1))
-			Expect(sess.sentPacketHandler.(*mockSentPacketHandler).sentPackets[0].Frames).To(ContainElement(&wire.PingFrame{}))
+			Expect(sess.paths[0].sentPacketHandler.(*mockSentPacketHandler).sentPackets[0].Frames).To(ContainElement(&wire.PingFrame{}))
 		})
 
 		It("sends two WindowUpdate frames", func() {
@@ -995,8 +1034,9 @@ var _ = Describe("Session", func() {
 		})
 
 		It("informs the SentPacketHandler about sent packets", func() {
-			sess.sentPacketHandler = newMockSentPacketHandler()
-			sess.packer.packetNumberGenerator.next = 0x1337 + 9
+			// XXX (QDC): adapted to multiple paths
+			sess.paths[0].sentPacketHandler = newMockSentPacketHandler()
+			sess.paths[0].packetNumberGenerator.next = 0x1337 + 9
 			sess.packer.cryptoSetup = &mockCryptoSetup{encLevelSeal: protocol.EncryptionForwardSecure}
 
 			f := &wire.StreamFrame{
@@ -1009,7 +1049,8 @@ var _ = Describe("Session", func() {
 			err = sess.sendPacket()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mconn.written).To(HaveLen(1))
-			sentPackets := sess.sentPacketHandler.(*mockSentPacketHandler).sentPackets
+			// XXX (QDC): adapted to multiple paths
+			sentPackets := sess.paths[0].sentPacketHandler.(*mockSentPacketHandler).sentPackets
 			Expect(sentPackets).To(HaveLen(1))
 			Expect(sentPackets[0].Frames).To(ContainElement(f))
 			Expect(sentPackets[0].EncryptionLevel).To(Equal(protocol.EncryptionForwardSecure))
@@ -1022,9 +1063,10 @@ var _ = Describe("Session", func() {
 		var sph *mockSentPacketHandler
 		BeforeEach(func() {
 			// a StopWaitingFrame is added, so make sure the packet number of the new package is higher than the packet number of the retransmitted packet
-			sess.packer.packetNumberGenerator.next = 0x1337 + 10
+			sess.paths[0].packetNumberGenerator.next = 0x1337 + 10
 			sph = newMockSentPacketHandler().(*mockSentPacketHandler)
-			sess.sentPacketHandler = sph
+			// XXX (QDC): adapted to multiple paths
+			sess.paths[0].sentPacketHandler = sph
 			sess.packer.cryptoSetup = &mockCryptoSetup{encLevelSeal: protocol.EncryptionForwardSecure}
 		})
 
@@ -1148,7 +1190,8 @@ var _ = Describe("Session", func() {
 				Expect(err).ToNot(HaveOccurred())
 				fcm := mocks_fc.NewMockFlowControlManager(mockCtrl)
 				sess.flowControlManager = fcm
-				fcm.EXPECT().GetWindowUpdates()
+				fcm.EXPECT().GetWindowUpdates(false)
+				fcm.EXPECT().GetWindowUpdates(false)
 				fcm.EXPECT().GetReceiveWindow(protocol.StreamID(5)).Return(protocol.ByteCount(0x1000), nil)
 				wuf := &wire.WindowUpdateFrame{
 					StreamID:   5,
@@ -1169,7 +1212,8 @@ var _ = Describe("Session", func() {
 				Expect(err).ToNot(HaveOccurred())
 				fcm := mocks_fc.NewMockFlowControlManager(mockCtrl)
 				sess.flowControlManager = fcm
-				fcm.EXPECT().GetWindowUpdates()
+				fcm.EXPECT().GetWindowUpdates(false)
+				fcm.EXPECT().GetWindowUpdates(false)
 				fcm.EXPECT().GetReceiveWindow(protocol.StreamID(5)).Return(protocol.ByteCount(0x2000), nil)
 				sph.retransmissionQueue = []*ackhandler.Packet{{
 					Frames: []wire.Frame{&wire.WindowUpdateFrame{
@@ -1214,9 +1258,10 @@ var _ = Describe("Session", func() {
 		rtt := time.Millisecond
 		sess.rttStats.UpdateRTT(rtt, 0, time.Now())
 		Expect(sess.rttStats.SmoothedRTT()).To(Equal(rtt)) // make sure it worked
-		sess.packer.packetNumberGenerator.next = n + 1
+		sess.paths[0].packetNumberGenerator.next = n + 1
 		// Now, we send a single packet, and expect that it was retransmitted later
-		err := sess.sentPacketHandler.SentPacket(&ackhandler.Packet{
+		// XXX (QDC): adapted to multiple paths
+		err := sess.paths[0].sentPacketHandler.SentPacket(&ackhandler.Packet{
 			PacketNumber: n,
 			Length:       1,
 			Frames: []wire.Frame{&wire.StreamFrame{
@@ -1227,6 +1272,8 @@ var _ = Describe("Session", func() {
 		Expect(err).NotTo(HaveOccurred())
 		go sess.run()
 		defer sess.Close(nil)
+		// XXX (QDC) actually this test is ill suited with multipath...
+		sess.paths[0].maybeResetTimer()
 		sess.scheduleSending()
 		Eventually(func() int { return len(mconn.written) }).ShouldNot(BeZero())
 		Expect(mconn.written).To(Receive(ContainSubstring("foobar")))
@@ -1252,7 +1299,8 @@ var _ = Describe("Session", func() {
 		It("sets the timer to the ack timer", func() {
 			rph := &mockReceivedPacketHandler{ackAlarm: time.Now().Add(10 * time.Millisecond)}
 			rph.nextAckFrame = &wire.AckFrame{LargestAcked: 0x1337}
-			sess.receivedPacketHandler = rph
+			// XXX (QDC): adapted to multiple paths
+			sess.paths[0].receivedPacketHandler = rph
 			go sess.run()
 			defer sess.Close(nil)
 			time.Sleep(10 * time.Millisecond)
@@ -1312,7 +1360,8 @@ var _ = Describe("Session", func() {
 
 			It("sends a queued ACK frame only once", func() {
 				packetNumber := protocol.PacketNumber(0x1337)
-				sess.receivedPacketHandler.ReceivedPacket(packetNumber, true)
+				// XXX (QDC): adapted to multiple paths
+				sess.paths[0].receivedPacketHandler.ReceivedPacket(packetNumber, true)
 
 				s, err := sess.GetOrOpenStream(5)
 				Expect(err).NotTo(HaveOccurred())
@@ -1624,17 +1673,18 @@ var _ = Describe("Session", func() {
 
 	Context("ignoring errors", func() {
 		It("ignores duplicate acks", func() {
-			sess.sentPacketHandler.SentPacket(&ackhandler.Packet{
+			// XXX (QDC): adapted to multiple paths
+			sess.paths[0].sentPacketHandler.SentPacket(&ackhandler.Packet{
 				PacketNumber: 1,
 				Length:       1,
 			})
 			err := sess.handleFrames([]wire.Frame{&wire.AckFrame{
 				LargestAcked: 1,
-			}})
+			}}, sess.paths[0])
 			Expect(err).NotTo(HaveOccurred())
 			err = sess.handleFrames([]wire.Frame{&wire.AckFrame{
 				LargestAcked: 1,
-			}})
+			}}, sess.paths[0])
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
@@ -1643,7 +1693,7 @@ var _ = Describe("Session", func() {
 		It("gets stream level window updates", func() {
 			err := sess.flowControlManager.AddBytesRead(1, protocol.ReceiveStreamFlowControlWindow)
 			Expect(err).NotTo(HaveOccurred())
-			frames := sess.getWindowUpdateFrames()
+			frames := sess.getWindowUpdateFrames(false)
 			Expect(frames).To(HaveLen(1))
 			Expect(frames[0].StreamID).To(Equal(protocol.StreamID(1)))
 			Expect(frames[0].ByteOffset).To(BeEquivalentTo(protocol.ReceiveStreamFlowControlWindow * 2))
@@ -1654,7 +1704,7 @@ var _ = Describe("Session", func() {
 			Expect(err).NotTo(HaveOccurred())
 			err = sess.flowControlManager.AddBytesRead(5, protocol.ReceiveConnectionFlowControlWindow)
 			Expect(err).NotTo(HaveOccurred())
-			frames := sess.getWindowUpdateFrames()
+			frames := sess.getWindowUpdateFrames(false)
 			Expect(frames).To(HaveLen(1))
 			Expect(frames[0].StreamID).To(Equal(protocol.StreamID(0)))
 			Expect(frames[0].ByteOffset).To(BeEquivalentTo(protocol.ReceiveConnectionFlowControlWindow * 2))
@@ -1678,6 +1728,7 @@ var _ = Describe("Client Session", func() {
 	var (
 		sess        *session
 		mconn       *mockConnection
+		pconnMgr    *pconnManager
 		aeadChanged chan<- protocol.EncryptionLevel
 
 		cryptoSetup *mockCryptoSetup
@@ -1703,8 +1754,11 @@ var _ = Describe("Client Session", func() {
 		}
 
 		mconn = newMockConnection()
+		pconnMgr = &pconnManager{}
 		sessP, _, err := newClientSession(
 			mconn,
+			pconnMgr,
+			false,
 			"hostname",
 			protocol.Version37,
 			0,

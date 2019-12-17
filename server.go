@@ -30,7 +30,7 @@ type server struct {
 	tlsConf *tls.Config
 	config  *Config
 
-	conn net.PacketConn
+	pconnMgr *pconnManager
 
 	certChain crypto.CertChain
 	scfg      *handshake.ServerConfig
@@ -43,7 +43,7 @@ type server struct {
 	sessionQueue chan Session
 	errorChan    chan struct{}
 
-	newSession func(conn connection, v protocol.VersionNumber, connectionID protocol.ConnectionID, sCfg *handshake.ServerConfig, tlsConf *tls.Config, config *Config) (packetHandler, <-chan handshakeEvent, error)
+	newSession func(conn connection, pconnMgr *pconnManager, createPaths bool, v protocol.VersionNumber, connectionID protocol.ConnectionID, sCfg *handshake.ServerConfig, tlsConf *tls.Config, config *Config) (packetHandler, <-chan handshakeEvent, error)
 }
 
 var _ Listener = &server{}
@@ -52,21 +52,60 @@ var _ Listener = &server{}
 // The listener is not active until Serve() is called.
 // The tls.Config must not be nil, the quic.Config may be nil.
 func ListenAddr(addr string, tlsConf *tls.Config, config *Config) (Listener, error) {
+	return ListenAddrImpl(addr, tlsConf, config, nil)
+}
+
+// ListenAddrImpl creates a QUIC server listening on a given address.
+// The listener is not active until Serve() is called.
+// The tls.Config must not be nil, the quic.Config may be nil.
+// The pconnManager may be nil
+func ListenAddrImpl(addr string, tlsConf *tls.Config, config *Config, pconnMgrArg *pconnManager) (Listener, error) {
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := net.ListenUDP("udp", udpAddr)
-	if err != nil {
-		return nil, err
+
+	var pconnMgr *pconnManager
+
+	if pconnMgrArg == nil {
+		// Create the pconnManager here. It will be used to start udp connections
+		pconnMgr = &pconnManager{perspective: protocol.PerspectiveServer}
+		// XXX (QDC): make this cleaner
+		pconn, err := net.ListenUDP("udp", udpAddr)
+		if err != nil {
+			utils.Errorf("pconn_manager: %v", err)
+			// Format for expected consistency
+			operr := &net.OpError{Op: "listen", Net: "udp", Source: udpAddr, Addr: udpAddr, Err: err}
+			return nil, operr
+		}
+		err = pconnMgr.setup(pconn, udpAddr)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		pconnMgr = pconnMgrArg
 	}
-	return Listen(conn, tlsConf, config)
+	return ListenImpl(pconnMgr.pconnAny, tlsConf, config, pconnMgr)
 }
 
 // Listen listens for QUIC connections on a given net.PacketConn.
 // The listener is not active until Serve() is called.
 // The tls.Config must not be nil, the quic.Config may be nil.
-func Listen(conn net.PacketConn, tlsConf *tls.Config, config *Config) (Listener, error) {
+func Listen(pconn net.PacketConn, tlsConf *tls.Config, config *Config) (Listener, error) {
+	// Create the pconnManager here. It will be used to start udp connections
+	pconnMgr := &pconnManager{perspective: protocol.PerspectiveServer}
+	err := pconnMgr.setup(pconn, nil)
+	if err != nil {
+		return nil, err
+	}
+	return ListenImpl(pconn, tlsConf, config, pconnMgr)
+}
+
+// ListenImpl listens for QUIC connections on a given net.PacketConn.
+// The listener is not active until Serve() is called.
+// The tls.Config must not be nil, the quic.Config may be nil.
+// pconnManager may be nil
+func ListenImpl(pconn net.PacketConn, tlsConf *tls.Config, config *Config, pconnMgrArg *pconnManager) (Listener, error) {
 	certChain := crypto.NewCertChain(tlsConf)
 	kex, err := crypto.NewCurve25519KEX()
 	if err != nil {
@@ -77,8 +116,20 @@ func Listen(conn net.PacketConn, tlsConf *tls.Config, config *Config) (Listener,
 		return nil, err
 	}
 
+	var pconnMgr *pconnManager
+
+	if pconnMgrArg == nil {
+		pconnMgr = &pconnManager{perspective: protocol.PerspectiveServer}
+		err := pconnMgr.setup(pconn, nil)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		pconnMgr = pconnMgrArg
+	}
+
 	s := &server{
-		conn:                      conn,
+		pconnMgr:                  pconnMgr,
 		tlsConf:                   tlsConf,
 		config:                    populateServerConfig(config),
 		certChain:                 certChain,
@@ -90,7 +141,7 @@ func Listen(conn net.PacketConn, tlsConf *tls.Config, config *Config) (Listener,
 		errorChan:                 make(chan struct{}),
 	}
 	go s.serve()
-	utils.Debugf("Listening for %s connections on %s", conn.LocalAddr().Network(), conn.LocalAddr().String())
+	utils.Debugf("Listening for %s connections on %s", pconn.LocalAddr().Network(), pconn.LocalAddr().String())
 	return s, nil
 }
 
@@ -114,7 +165,9 @@ var defaultAcceptCookie = func(clientAddr net.Addr, cookie *Cookie) bool {
 // it may be called with nil
 func populateServerConfig(config *Config) *Config {
 	if config == nil {
-		config = &Config{}
+		config = &Config{
+			CreatePaths: true, // Grant this ability by default for a server
+		}
 	}
 	versions := config.Versions
 	if len(versions) == 0 {
@@ -158,20 +211,16 @@ func populateServerConfig(config *Config) *Config {
 // serve listens on an existing PacketConn
 func (s *server) serve() {
 	for {
-		data := getPacketBuffer()
-		data = data[:protocol.MaxReceivePacketSize]
-		// The packet size should not exceed protocol.MaxReceivePacketSize bytes
-		// If it does, we only read a truncated packet, which will then end up undecryptable
-		n, remoteAddr, err := s.conn.ReadFrom(data)
-		if err != nil {
+		select {
+		case err := <-s.pconnMgr.errorConn:
 			s.serverError = err
 			close(s.errorChan)
 			_ = s.Close()
 			return
-		}
-		data = data[:n]
-		if err := s.handlePacket(s.conn, remoteAddr, data); err != nil {
-			utils.Errorf("error handling packet: %s", err.Error())
+		case rcvRawPacket := <-s.pconnMgr.rcvRawPackets:
+			if err := s.handlePacket(rcvRawPacket); err != nil {
+				utils.Errorf("error handling packet: %s", err.Error())
+			}
 		}
 	}
 }
@@ -199,19 +248,37 @@ func (s *server) Close() error {
 	}
 	s.sessionsMutex.Unlock()
 
-	if s.conn == nil {
-		return nil
+	s.pconnMgr.closeConns <- struct{}{}
+	if s.pconnMgr != nil && s.pconnMgr.closed != nil {
+		select {
+		case <-s.pconnMgr.closed:
+		default:
+			// We never know...
+		}
+		// Wait that connections are closed
+		<-s.pconnMgr.closed
 	}
-	return s.conn.Close()
+	return nil
 }
 
 // Addr returns the server's network address
 func (s *server) Addr() net.Addr {
-	return s.conn.LocalAddr()
+	if s.pconnMgr == nil {
+		addr, _ := net.ResolveUDPAddr("udp", "1.2.3.4:5678")
+		return addr
+	}
+	if s.pconnMgr.pconnAny == nil {
+		addr, _ := net.ResolveUDPAddr("udp", "5.6.7.8:9101")
+		return addr
+	}
+	return s.pconnMgr.pconnAny.LocalAddr()
 }
 
-func (s *server) handlePacket(pconn net.PacketConn, remoteAddr net.Addr, packet []byte) error {
-	rcvTime := time.Now()
+func (s *server) handlePacket(rcvRawPacket *receivedRawPacket) error {
+	pconn := rcvRawPacket.rcvPconn
+	remoteAddr := rcvRawPacket.remoteAddr
+	packet := rcvRawPacket.data
+	rcvTime := rcvRawPacket.rcvTime
 
 	r := bytes.NewReader(packet)
 	connID, err := wire.PeekConnectionID(r, protocol.PerspectiveClient)
@@ -284,9 +351,13 @@ func (s *server) handlePacket(pconn net.PacketConn, remoteAddr net.Addr, packet 
 		}
 
 		utils.Infof("Serving new connection: %x, version %s from %v", hdr.ConnectionID, version, remoteAddr)
+		// It's the responsibility of the server to give a proper connection
+		conn := &conn{pconn: pconn, currentAddr: remoteAddr}
 		var handshakeChan <-chan handshakeEvent
 		session, handshakeChan, err = s.newSession(
-			&conn{pconn: pconn, currentAddr: remoteAddr},
+			conn,
+			s.pconnMgr,
+			s.config.CreatePaths,
 			version,
 			hdr.ConnectionID,
 			s.scfg,
@@ -324,6 +395,7 @@ func (s *server) handlePacket(pconn net.PacketConn, remoteAddr net.Addr, packet 
 		publicHeader: hdr,
 		data:         packet[len(packet)-r.Len():],
 		rcvTime:      rcvTime,
+		rcvPconn:     pconn,
 	})
 	return nil
 }

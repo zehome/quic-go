@@ -32,3 +32,27 @@ func (p *Packet) GetFramesForRetransmission() []wire.Frame {
 	}
 	return fs
 }
+
+func (p *Packet) IsRetransmittable() bool {
+	for _, f := range p.Frames {
+		switch f.(type) {
+		case *wire.StreamFrame:
+			return true
+		case *wire.RstStreamFrame:
+			return true
+		case *wire.WindowUpdateFrame:
+			return true
+		case *wire.BlockedFrame:
+			return true
+		case *wire.PingFrame:
+			return true
+		case *wire.GoawayFrame:
+			return true
+		case *wire.AddAddressFrame:
+			return true
+		case *wire.PathsFrame:
+			return true
+		}
+	}
+	return false
+}

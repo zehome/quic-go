@@ -48,6 +48,7 @@ func (m *mockCongestion) RetransmissionDelay() time.Duration {
 func (m *mockCongestion) SetNumEmulatedConnections(n int)         { panic("not implemented") }
 func (m *mockCongestion) OnConnectionMigration()                  { panic("not implemented") }
 func (m *mockCongestion) SetSlowStartLargeReduction(enabled bool) { panic("not implemented") }
+func (m *mockCongestion) SmoothedRTT() time.Duration              { return defaultRTOTimeout / 10 }
 
 func (m *mockCongestion) OnPacketAcked(n protocol.PacketNumber, l protocol.ByteCount, bif protocol.ByteCount) {
 	m.packetsAcked = append(m.packetsAcked, []interface{}{n, l, bif})
@@ -73,7 +74,7 @@ var _ = Describe("SentPacketHandler", func() {
 
 	BeforeEach(func() {
 		rttStats := &congestion.RTTStats{}
-		handler = NewSentPacketHandler(rttStats).(*sentPacketHandler)
+		handler = NewSentPacketHandler(rttStats, nil, nil).(*sentPacketHandler)
 		streamFrame = wire.StreamFrame{
 			StreamID: 5,
 			Data:     []byte{0x13, 0x37},
@@ -693,6 +694,7 @@ var _ = Describe("SentPacketHandler", func() {
 			handler.SentPacket(retransmittablePacket(1))
 			handler.SentPacket(retransmittablePacket(2))
 			handler.SentPacket(retransmittablePacket(3))
+			handler.tlpCount = maxTailLossProbes
 			handler.OnAlarm() // RTO, meaning 2 lost packets
 			Expect(cong.maybeExitSlowStart).To(BeFalse())
 			Expect(cong.onRetransmissionTimeout).To(BeTrue())
@@ -804,6 +806,7 @@ var _ = Describe("SentPacketHandler", func() {
 			Expect(handler.GetAlarmTimeout().Sub(time.Now())).To(BeNumerically("~", handler.computeRTOTimeout(), time.Minute))
 
 			// This means RTO, so both packets should be lost
+			handler.tlpCount = maxTailLossProbes
 			handler.OnAlarm()
 			Expect(handler.DequeuePacketForRetransmission()).ToNot(BeNil())
 			Expect(handler.DequeuePacketForRetransmission()).ToNot(BeNil())
@@ -821,6 +824,8 @@ var _ = Describe("SentPacketHandler", func() {
 			Expect(handler.lossTime.IsZero()).To(BeTrue())
 			Expect(handler.GetAlarmTimeout().Sub(time.Now())).To(BeNumerically("~", handler.computeRTOTimeout(), time.Minute))
 
+			// Disable TLP
+			handler.tlpCount = maxTailLossProbes
 			handler.OnAlarm()
 			p := handler.DequeuePacketForRetransmission()
 			Expect(p).ToNot(BeNil())

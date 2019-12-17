@@ -18,6 +18,7 @@ type SendAlgorithm interface {
 	OnRetransmissionTimeout(packetsRetransmitted bool)
 	OnConnectionMigration()
 	RetransmissionDelay() time.Duration
+	SmoothedRTT() time.Duration
 
 	// Experiments
 	SetSlowStartLargeReduction(enabled bool)

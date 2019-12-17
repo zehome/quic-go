@@ -21,7 +21,11 @@ func LogFrame(frame Frame, sent bool) {
 			utils.Debugf("\t%s &wire.StopWaitingFrame{LeastUnacked: 0x%x}", dir, f.LeastUnacked)
 		}
 	case *AckFrame:
-		utils.Debugf("\t%s &wire.AckFrame{LargestAcked: 0x%x, LowestAcked: 0x%x, AckRanges: %#v, DelayTime: %s}", dir, f.LargestAcked, f.LowestAcked, f.AckRanges, f.DelayTime.String())
+		utils.Debugf("\t%s &wire.AckFrame{PathID: 0x%x, LargestAcked: 0x%x, LowestAcked: 0x%x, AckRanges: %#v, DelayTime: %s}", dir, f.PathID, f.LargestAcked, f.LowestAcked, f.AckRanges, f.DelayTime.String())
+	case *AddAddressFrame:
+		utils.Debugf("\t%s &wire.AddAddressFrame{IPVersion: %d, Addr: %s}", dir, f.IPVersion, f.Addr.String())
+	case *ClosePathFrame:
+		utils.Debugf("\t%s &wire.ClosePathFrame{PathID: 0x%x, LargestAcked: 0x%x, LowestAcked: 0x%x, AckRanges: %#v}", dir, f.PathID, f.LargestAcked, f.LowestAcked, f.AckRanges)
 	default:
 		utils.Debugf("\t%s %#v", dir, frame)
 	}

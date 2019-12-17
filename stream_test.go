@@ -1027,4 +1027,26 @@ var _ = Describe("Stream", func() {
 			Expect(str.finished()).To(BeTrue())
 		})
 	})
+
+	Context("GetBytesSent", func() {
+		It("return the correct number of bytes sent", func() {
+			mockFcm.EXPECT().AddBytesSent(streamID, protocol.ByteCount(200))
+			mockFcm.AddBytesSent(streamID, protocol.ByteCount(200))
+			mockFcm.EXPECT().GetBytesSent(streamID).Return(protocol.ByteCount(200), nil)
+			bytes, err := str.GetBytesSent()
+			Expect(err).ToNot(HaveOccurred())
+			Expect(bytes).To(Equal(protocol.ByteCount(200)))
+		})
+	})
+
+	Context("GetBytesRetrans", func() {
+		It("return the correct number of bytes retransmitted", func() {
+			mockFcm.EXPECT().AddBytesRetrans(streamID, protocol.ByteCount(200))
+			mockFcm.AddBytesRetrans(streamID, protocol.ByteCount(200))
+			mockFcm.EXPECT().GetBytesRetrans(streamID).Return(protocol.ByteCount(200), nil)
+			bytes, err := str.GetBytesRetrans()
+			Expect(err).ToNot(HaveOccurred())
+			Expect(bytes).To(Equal(protocol.ByteCount(200)))
+		})
+	})
 })

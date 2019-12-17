@@ -14,11 +14,13 @@ const (
 	VersionWhatever    VersionNumber = 0 // for when the version doesn't matter
 	VersionUnsupported VersionNumber = -1
 	VersionUnknown     VersionNumber = -2
+	VersionMP          VersionNumber = 512
 )
 
 // SupportedVersions lists the versions that the server supports
 // must be in sorted descending order
 var SupportedVersions = []VersionNumber{
+	VersionMP,
 	Version39,
 	Version38,
 	Version37,

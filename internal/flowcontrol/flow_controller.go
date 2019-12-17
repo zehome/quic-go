@@ -16,9 +16,13 @@ type flowController struct {
 
 	connectionParameters handshake.ConnectionParametersManager
 	rttStats             *congestion.RTTStats
+	remoteRTTs           map[protocol.PathID]time.Duration
 
 	bytesSent  protocol.ByteCount
 	sendWindow protocol.ByteCount
+
+	// For statistics purpose
+	bytesRetrans protocol.ByteCount
 
 	lastWindowUpdateTime time.Time
 
@@ -33,12 +37,13 @@ type flowController struct {
 var ErrReceivedSmallerByteOffset = errors.New("Received a smaller byte offset")
 
 // newFlowController gets a new flow controller
-func newFlowController(streamID protocol.StreamID, contributesToConnection bool, connectionParameters handshake.ConnectionParametersManager, rttStats *congestion.RTTStats) *flowController {
+func newFlowController(streamID protocol.StreamID, contributesToConnection bool, connectionParameters handshake.ConnectionParametersManager, rttStats *congestion.RTTStats, remoteRTTs map[protocol.PathID]time.Duration) *flowController {
 	fc := flowController{
 		streamID:                streamID,
 		contributesToConnection: contributesToConnection,
 		connectionParameters:    connectionParameters,
 		rttStats:                rttStats,
+		remoteRTTs:              remoteRTTs,
 	}
 
 	if streamID == 0 {
@@ -70,6 +75,18 @@ func (c *flowController) getSendWindow() protocol.ByteCount {
 
 func (c *flowController) AddBytesSent(n protocol.ByteCount) {
 	c.bytesSent += n
+}
+
+func (c *flowController) GetBytesSent() protocol.ByteCount {
+	return c.bytesSent
+}
+
+func (c *flowController) AddBytesRetrans(n protocol.ByteCount) {
+	c.bytesRetrans += n
+}
+
+func (c *flowController) GetBytesRetrans() protocol.ByteCount {
+	return c.bytesRetrans
 }
 
 // UpdateSendWindow should be called after receiving a WindowUpdateFrame
@@ -148,7 +165,7 @@ func (c *flowController) MaybeUpdateWindow() (bool, protocol.ByteCount /* new in
 		return true, newWindowIncrement, c.receiveWindow
 	}
 
-	return false, 0, 0
+	return false, c.receiveWindowIncrement, c.receiveWindow
 }
 
 // maybeAdjustWindowIncrement increases the receiveWindowIncrement if we're sending WindowUpdates too often
@@ -164,8 +181,13 @@ func (c *flowController) maybeAdjustWindowIncrement() {
 
 	timeSinceLastWindowUpdate := time.Since(c.lastWindowUpdateTime)
 
+	var maxRemoteRTT time.Duration
+	for _, remoteRTT := range(c.remoteRTTs) {
+		maxRemoteRTT = utils.MaxDuration(maxRemoteRTT, remoteRTT)
+	}
+
 	// interval between the window updates is sufficiently large, no need to increase the increment
-	if timeSinceLastWindowUpdate >= 2*rtt {
+	if timeSinceLastWindowUpdate >= 2*utils.MaxDuration(rtt, maxRemoteRTT) {
 		return
 	}
 

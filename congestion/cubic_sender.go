@@ -296,3 +296,7 @@ func (c *cubicSender) RetransmissionDelay() time.Duration {
 	}
 	return c.rttStats.SmoothedRTT() + c.rttStats.MeanDeviation()*4
 }
+
+func (c *cubicSender) SmoothedRTT() time.Duration {
+	return c.rttStats.SmoothedRTT()
+}

@@ -100,6 +100,12 @@ func (u *packetUnpacker) Unpack(publicHeaderBinary []byte, hdr *wire.PublicHeade
 				}
 			case 0x07:
 				frame, err = wire.ParsePingFrame(r, u.version)
+			case 0x10:
+				frame, err = wire.ParseAddAddressFrame(r, u.version)
+			case 0x11:
+				frame, err = wire.ParseClosePathFrame(r, u.version)
+			case 0x12:
+				frame, err = wire.ParsePathsFrame(r, u.version)
 			default:
 				err = qerr.Error(qerr.InvalidFrameData, fmt.Sprintf("unknown type byte 0x%x", typeByte))
 			}

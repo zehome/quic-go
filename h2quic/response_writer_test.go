@@ -46,6 +46,8 @@ func (s *mockStream) Context() context.Context              { return s.ctx }
 func (s *mockStream) SetDeadline(time.Time) error           { panic("not implemented") }
 func (s *mockStream) SetReadDeadline(time.Time) error       { panic("not implemented") }
 func (s *mockStream) SetWriteDeadline(time.Time) error      { panic("not implemented") }
+	func (s *mockStream) GetBytesSent() (protocol.ByteCount, error)    { panic("not implemented") }
+	func (s *mockStream) GetBytesRetrans() (protocol.ByteCount, error) { panic("not implemented") }
 
 func (s *mockStream) Read(p []byte) (int, error) {
 	n, _ := s.dataToRead.Read(p)
